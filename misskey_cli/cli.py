@@ -9,7 +9,7 @@ from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import FileHistory
 
-from .api import MisskeyClient
+from .api import MisskeyClient, detect_software, MIAUTH_SOFTWARE
 from . import config
 
 HISTORY_FILE = str(config.CONFIG_DIR / "history")
@@ -394,6 +394,15 @@ class MisskeyCLI:
         host = arg.strip()
         if not host:
             print("使い方: login <host>  例: login misskey.caligula-sea.net")
+            return
+        software = detect_software(host)
+        if software is None:
+            print(f"サーバー情報を取得できませんでした: {host}")
+            print("(nodeinfo にアクセスできません。ホスト名を確認してください)")
+            return
+        print(f"検出: {software}")
+        if software not in MIAUTH_SOFTWARE:
+            print(f"このサーバーは未対応です ({software})。現状 MiAuth 対応 (Misskey 系) のみサポートしています。")
             return
         try:
             user = self.client.login(host)

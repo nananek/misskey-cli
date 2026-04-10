@@ -13,6 +13,44 @@ PERMISSIONS = [
     "write:reactions",
 ]
 
+# Software families that speak MiAuth (Misskey-derived)
+MIAUTH_SOFTWARE = {
+    "misskey",
+    "sharkey",
+    "firefish",
+    "iceshrimp",
+    "iceshrimp-net",
+    "cherrypick",
+    "foundkey",
+    "meisskey",
+    "catodon",
+    "magnetar",
+}
+
+
+def detect_software(host, scheme="https"):
+    """Discover server software via nodeinfo.
+
+    Returns the lowercase software name (e.g. 'misskey', 'mastodon') or None
+    if discovery fails.
+    """
+    try:
+        r = requests.get(f"{scheme}://{host}/.well-known/nodeinfo", timeout=10)
+        r.raise_for_status()
+        links = r.json().get("links") or []
+        if not links:
+            return None
+        # Prefer the highest-version link (last entry by convention).
+        href = links[-1].get("href")
+        if not href:
+            return None
+        r = requests.get(href, timeout=10)
+        r.raise_for_status()
+        name = (r.json().get("software") or {}).get("name")
+        return name.lower() if name else None
+    except (requests.RequestException, ValueError, KeyError, TypeError):
+        return None
+
 
 class MisskeyClient:
     def __init__(self, host=None, token=None, scheme="https"):
