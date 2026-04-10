@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import tempfile
 from datetime import datetime
@@ -128,6 +129,49 @@ def _format_notification(notif):
 
 
 NOTE_ID_COMMANDS = ("reply", "renote", "react")
+
+
+LUA_EMOJI_COMPLETE = r"""
+local emojis = __EMOJIS__
+
+local function trigger()
+  if vim.fn.mode() ~= 'i' then return end
+  local line = vim.api.nvim_get_current_line()
+  local col = vim.api.nvim_win_get_cursor(0)[2]
+  local before = line:sub(1, col)
+  local colon_pos = before:find(':[%w_-]*$')
+  if not colon_pos then return end
+  -- Skip if ':' is preceded by a word/identifier char (e.g. URLs, closing colon of an emoji)
+  if colon_pos > 1 then
+    local prev = before:sub(colon_pos - 1, colon_pos - 1)
+    if prev:match('[%w_-]') then return end
+  end
+  local needle = before:sub(colon_pos + 1):lower()
+  local matches = {}
+  for _, e in ipairs(emojis) do
+    local bare = e:sub(2, -2):lower()
+    if needle == '' or bare:find(needle, 1, true) then
+      table.insert(matches, e)
+    end
+  end
+  if #matches > 0 then
+    vim.fn.complete(colon_pos, matches)
+  end
+end
+
+vim.api.nvim_create_autocmd({'TextChangedI', 'TextChangedP'}, {
+  buffer = 0,
+  callback = trigger,
+})
+
+vim.opt.completeopt = 'menu,menuone,noinsert,noselect'
+"""
+
+
+def _build_emoji_lua(shortcodes):
+    safe = [n for n in shortcodes if re.match(r'^[a-zA-Z0-9_-]+$', n)]
+    emoji_list = "{" + ", ".join(f"':{n}:'" for n in safe) + "}"
+    return LUA_EMOJI_COMPLETE.replace("__EMOJIS__", emoji_list)
 
 
 def _note_summary(note):
@@ -262,26 +306,32 @@ class MisskeyCLI:
         with tempfile.NamedTemporaryFile(suffix=".md", mode="w+", delete=False) as f:
             tmppath = f.name
 
-        dict_path = None
+        extra_files = []
         try:
             editor_parts = editor.split()
             editor_bin = os.path.basename(editor_parts[0])
             cmd = list(editor_parts)
+            shortcodes = self._get_emoji_names() if editor_bin in ("nvim", "vim") else []
 
-            # For vim/nvim, set up dictionary completion of emoji shortcodes
-            if editor_bin in ("nvim", "vim"):
-                shortcodes = self._get_emoji_names()
-                if shortcodes:
-                    with tempfile.NamedTemporaryFile(suffix=".txt", mode="w", delete=False) as df:
-                        for name in shortcodes:
-                            df.write(f":{name}:\n")
-                        dict_path = df.name
-                    cmd += [
-                        "-c", "set iskeyword+=58",  # 58 = ':'
-                        "-c", f"set dictionary={dict_path}",
-                        "-c", "set complete+=k",
-                    ]
-                    print("絵文字補完: <C-n> / <C-p> または <C-x><C-k>")
+            if editor_bin == "nvim" and shortcodes:
+                with tempfile.NamedTemporaryFile(suffix=".lua", mode="w", delete=False) as lf:
+                    lf.write(_build_emoji_lua(shortcodes))
+                    lua_path = lf.name
+                extra_files.append(lua_path)
+                cmd += ["-c", f"luafile {lua_path}"]
+                print("絵文字補完: 挿入モードで `:` を入力すると候補が出ます (部分一致)")
+            elif editor_bin == "vim" and shortcodes:
+                with tempfile.NamedTemporaryFile(suffix=".txt", mode="w", delete=False) as df:
+                    for name in shortcodes:
+                        df.write(f":{name}:\n")
+                    dict_path = df.name
+                extra_files.append(dict_path)
+                cmd += [
+                    "-c", "set iskeyword+=58",  # 58 = ':'
+                    "-c", f"set dictionary={dict_path}",
+                    "-c", "set complete+=k",
+                ]
+                print("絵文字補完: <C-n> / <C-p> または <C-x><C-k>")
 
             cmd.append(tmppath)
             subprocess.call(cmd)
@@ -290,8 +340,9 @@ class MisskeyCLI:
             return text or None
         finally:
             os.unlink(tmppath)
-            if dict_path and os.path.exists(dict_path):
-                os.unlink(dict_path)
+            for p in extra_files:
+                if os.path.exists(p):
+                    os.unlink(p)
 
     def _resolve_visibility(self, arg):
         if arg and arg in VISIBILITIES:

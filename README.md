@@ -50,7 +50,8 @@ Tab キーでドロップダウン補完が表示されます。
 - `reply` / `renote` / `react` のノートID (直近の tl/notif から取得、新しい順)
 - `react` の絵文字ショートコード (部分一致検索)
 
-`note` でエディタが nvim/vim の場合、絵文字ショートコードを dictionary completion として読み込みます。挿入モードで `<C-n>` / `<C-p>` または `<C-x><C-k>` で `:emoji_name:` を補完できます。
+`note` でエディタが nvim の場合、挿入モードで `:` を入力するとポップアップが出て、続けてタイプすると部分一致で絞り込まれます (Misskey Web UI 風)。`<C-n>`/`<C-p>` で選択、`<C-y>` で確定。
+vim の場合は dictionary completion として読み込まれるので、`<C-n>` または `<C-x><C-k>` で `:emoji_name:` を補完できます。
 
 ## プロンプト
 
