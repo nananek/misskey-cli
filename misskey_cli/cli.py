@@ -11,6 +11,7 @@ from . import config
 HISTORY_FILE = config.CONFIG_DIR / "history"
 
 VISIBILITIES = ("public", "home", "followers", "specified")
+TL_TYPES = ("home", "local", "hybrid", "global")
 
 
 def _format_note(note):
@@ -79,6 +80,7 @@ class MisskeyCLI(cmd.Cmd):
         super().__init__()
         self._init_history()
         self.username = None
+        self._emoji_cache = None
         self.client = MisskeyClient()
         if self.client.logged_in:
             try:
@@ -108,6 +110,37 @@ class MisskeyCLI(cmd.Cmd):
             who = "(no login)"
         vis = config.get_default_visibility()
         self.prompt = f"{who} [{vis}]> "
+
+    def _complete_choices(self, choices, text):
+        return [c for c in choices if c.startswith(text)]
+
+    def _get_emoji_shortcodes(self):
+        if self._emoji_cache is None and self.client.logged_in:
+            try:
+                emojis = self.client.emojis()
+                self._emoji_cache = [f":{e['name']}:" for e in emojis]
+            except Exception:
+                self._emoji_cache = []
+        return self._emoji_cache or []
+
+    def complete_tl(self, text, line, begidx, endidx):
+        return self._complete_choices(TL_TYPES, text)
+
+    def complete_note(self, text, line, begidx, endidx):
+        return self._complete_choices(VISIBILITIES, text)
+
+    def complete_note_text(self, text, line, begidx, endidx):
+        return self._complete_choices(VISIBILITIES, text)
+
+    def complete_default_visibility(self, text, line, begidx, endidx):
+        return self._complete_choices(VISIBILITIES, text)
+
+    def complete_react(self, text, line, begidx, endidx):
+        # Complete emoji shortcodes for the second argument
+        parts = line[:begidx].split()
+        if len(parts) >= 2:
+            return self._complete_choices(self._get_emoji_shortcodes(), text)
+        return []
 
     def _require_login(self):
         if not self.client.logged_in:

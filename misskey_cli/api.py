@@ -92,3 +92,8 @@ class MisskeyClient:
 
     def notifications(self, limit=10):
         return self._post("i/notifications", limit=limit)
+
+    def emojis(self):
+        resp = requests.post(self._url("api/emojis"), json={}, timeout=30)
+        resp.raise_for_status()
+        return resp.json().get("emojis", [])
