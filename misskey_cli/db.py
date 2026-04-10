@@ -1,5 +1,6 @@
-from sqlalchemy import create_engine, Column, String
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime
 from sqlalchemy.orm import DeclarativeBase, Session
+from sqlalchemy.sql import func
 
 from . import config as _config_paths
 
@@ -8,10 +9,20 @@ class Base(DeclarativeBase):
     pass
 
 
-class Config(Base):
-    __tablename__ = "config"
-    key = Column(String, primary_key=True)
-    value = Column(String)
+class Account(Base):
+    __tablename__ = "accounts"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    host = Column(String, nullable=False)
+    username = Column(String)
+    token = Column(String, nullable=False)
+    active = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class Settings(Base):
+    __tablename__ = "settings"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    default_visibility = Column(String, nullable=False, default="public")
 
 
 _engine = None
