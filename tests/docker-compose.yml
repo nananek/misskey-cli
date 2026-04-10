@@ -1,0 +1,44 @@
+services:
+  misskey:
+    image: misskey/misskey:latest
+    ports:
+      - "61812:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./misskey-config.yml:/misskey/.config/default.yml:ro
+    networks:
+      - net
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-X", "POST", "-H", "Content-Type: application/json", "-d", "{}", "http://127.0.0.1:3000/api/ping"]
+      interval: 5s
+      retries: 40
+      start_period: 30s
+
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: misskey-test
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 5s
+      retries: 20
+    networks:
+      - net
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 20
+    networks:
+      - net
+
+networks:
+  net:

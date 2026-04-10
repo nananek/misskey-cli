@@ -1,0 +1,16 @@
+url: 'http://localhost:61812'
+port: 3000
+setupPassword: 'test_setup_password'
+
+db:
+  host: db
+  port: 5432
+  db: misskey-test
+  user: postgres
+  pass: postgres
+
+redis:
+  host: redis
+  port: 6379
+
+id: 'aidx'

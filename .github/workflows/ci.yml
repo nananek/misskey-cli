@@ -23,3 +23,40 @@ jobs:
           from misskey_cli.cli import MisskeyCLI
           print('import ok')
           "
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start Misskey
+        run: docker compose -f tests/docker-compose.yml up -d
+
+      - name: Wait for Misskey
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf -X POST -H 'Content-Type: application/json' -d '{}' http://localhost:61812/api/ping > /dev/null 2>&1; then
+              echo "Misskey is ready"
+              exit 0
+            fi
+            echo "Waiting... ($i/60)"
+            sleep 5
+          done
+          echo "Misskey failed to start"
+          docker compose -f tests/docker-compose.yml logs misskey
+          exit 1
+
+      - name: Build Docker image
+        run: docker build -t misskey-cli .
+
+      - name: Run E2E tests
+        run: |
+          docker run --rm \
+            --network tests_net \
+            -e MISSKEY_HOST=misskey:3000 \
+            --entrypoint python misskey-cli \
+            -m pytest tests/ -v
+
+      - name: Cleanup
+        if: always()
+        run: docker compose -f tests/docker-compose.yml down -v

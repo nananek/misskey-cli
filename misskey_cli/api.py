@@ -15,27 +15,31 @@ PERMISSIONS = [
 
 
 class MisskeyClient:
-    def __init__(self):
-        self.host = config.get_host()
-        self.token = config.get_token()
+    def __init__(self, host=None, token=None, scheme="https"):
+        self.host = host or config.get_host()
+        self.token = token or config.get_token()
+        self.scheme = scheme
 
     @property
     def logged_in(self):
         return self.host is not None and self.token is not None
 
+    def _url(self, path):
+        return f"{self.scheme}://{self.host}/{path}"
+
     def _post(self, endpoint, **params):
-        url = f"https://{self.host}/api/{endpoint}"
         body = {"i": self.token, **params}
-        resp = requests.post(url, json=body, timeout=30)
+        resp = requests.post(self._url(f"api/{endpoint}"), json=body, timeout=30)
         resp.raise_for_status()
         if resp.content:
             return resp.json()
         return None
 
     def login(self, host):
+        self.host = host
         session_id = str(uuid.uuid4())
         permissions = ",".join(PERMISSIONS)
-        auth_url = f"https://{host}/miauth/{session_id}?name=misskey-cli&permission={permissions}"
+        auth_url = self._url(f"miauth/{session_id}?name=misskey-cli&permission={permissions}")
 
         print(f"ブラウザで以下のURLを開いて認証してください:\n{auth_url}")
         try:
@@ -45,7 +49,7 @@ class MisskeyClient:
 
         input("\n認証が完了したらEnterを押してください...")
 
-        resp = requests.post(f"https://{host}/api/miauth/{session_id}/check", json={}, timeout=30)
+        resp = requests.post(self._url(f"api/miauth/{session_id}/check"), json={}, timeout=30)
         resp.raise_for_status()
         data = resp.json()
 
