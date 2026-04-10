@@ -261,13 +261,37 @@ class MisskeyCLI:
         editor = os.environ.get("EDITOR", "nvim")
         with tempfile.NamedTemporaryFile(suffix=".md", mode="w+", delete=False) as f:
             tmppath = f.name
+
+        dict_path = None
         try:
-            subprocess.call([editor, tmppath])
+            editor_parts = editor.split()
+            editor_bin = os.path.basename(editor_parts[0])
+            cmd = list(editor_parts)
+
+            # For vim/nvim, set up dictionary completion of emoji shortcodes
+            if editor_bin in ("nvim", "vim"):
+                shortcodes = self._get_emoji_names()
+                if shortcodes:
+                    with tempfile.NamedTemporaryFile(suffix=".txt", mode="w", delete=False) as df:
+                        for name in shortcodes:
+                            df.write(f":{name}:\n")
+                        dict_path = df.name
+                    cmd += [
+                        "-c", "set iskeyword+=58",  # 58 = ':'
+                        "-c", f"set dictionary={dict_path}",
+                        "-c", "set complete+=k",
+                    ]
+                    print("絵文字補完: <C-n> / <C-p> または <C-x><C-k>")
+
+            cmd.append(tmppath)
+            subprocess.call(cmd)
             with open(tmppath) as f:
                 text = f.read().strip()
             return text or None
         finally:
             os.unlink(tmppath)
+            if dict_path and os.path.exists(dict_path):
+                os.unlink(dict_path)
 
     def _resolve_visibility(self, arg):
         if arg and arg in VISIBILITIES:
