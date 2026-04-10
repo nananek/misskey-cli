@@ -55,8 +55,46 @@ jobs:
             --network tests_net \
             -e MISSKEY_HOST=misskey:3000 \
             --entrypoint python misskey-cli \
-            -m pytest tests/ -v
+            -m pytest tests/test_e2e.py -v
 
       - name: Cleanup
         if: always()
         run: docker compose -f tests/docker-compose.yml down -v
+
+  e2e-nekonoverse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start Nekonoverse
+        run: docker compose -f tests/nekonoverse-compose.yml -p nekotest up -d
+
+      - name: Wait for Nekonoverse
+        run: |
+          for i in $(seq 1 60); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' nekotest-app-1 2>/dev/null || echo "missing")
+            if [ "$status" = "healthy" ]; then
+              echo "Nekonoverse is ready"
+              exit 0
+            fi
+            echo "Waiting... ($i/60) status=$status"
+            sleep 5
+          done
+          echo "Nekonoverse failed to start"
+          docker compose -f tests/nekonoverse-compose.yml -p nekotest logs app
+          exit 1
+
+      - name: Build Docker image
+        run: docker build -t misskey-cli .
+
+      - name: Run Nekonoverse E2E tests
+        run: |
+          docker run --rm \
+            --network nekotest_net \
+            -e NEKONOVERSE_HOST=app:8000 \
+            --entrypoint python misskey-cli \
+            -m pytest tests/test_nekonoverse_e2e.py -v
+
+      - name: Cleanup
+        if: always()
+        run: docker compose -f tests/nekonoverse-compose.yml -p nekotest down -v
