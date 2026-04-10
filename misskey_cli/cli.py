@@ -2,8 +2,9 @@ import os
 import subprocess
 import tempfile
 
-from prompt_toolkit import PromptSession, print_formatted_text, HTML
+from prompt_toolkit import PromptSession, print_formatted_text
 from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import FileHistory
 
 from .api import MisskeyClient
@@ -41,27 +42,33 @@ def _format_note(note):
     ts = note.get("createdAt", "")[:19].replace("T", " ")
     note_id = note.get("id", "")
 
-    lines = [f"  {name} ({acct})  {ts}  [{note_id}]"]
+    parts = [
+        ("bold", f"  {name} "),
+        ("ansibrightblack", f"({acct})  {ts}  "),
+        ("ansicyan", f"[{note_id}]"),
+        ("", "\n"),
+    ]
 
     cw = note.get("cw")
     if cw:
-        lines.append(f"  CW: {cw}")
+        parts.append(("ansiyellow", f"  CW: {cw}\n"))
 
     text = note.get("text")
     if text:
         for line in text.split("\n"):
-            lines.append(f"  {line}")
+            parts.append(("", f"  {line}\n"))
 
     renote = note.get("renote")
     if renote and not text:
-        lines.append(f"  RN -> {_format_note(renote)}")
+        parts.append(("ansimagenta", "  RN -> "))
+        parts.extend(_format_note(renote))
 
     reactions = note.get("reactions", {})
     if reactions:
         r_str = " ".join(f"{k}{v}" for k, v in reactions.items())
-        lines.append(f"  {r_str}")
+        parts.append(("ansigreen", f"  {r_str}\n"))
 
-    return "\n".join(lines)
+    return parts
 
 
 def _format_notification(notif):
@@ -70,25 +77,42 @@ def _format_notification(notif):
     name = user.get("name") or user.get("username", "???")
     ts = notif.get("createdAt", "")[:19].replace("T", " ")
 
+    parts = [("ansibrightblack", f"  [{ts}] ")]
+
     if ntype == "reaction":
         reaction = notif.get("reaction", "?")
         note_text = (notif.get("note", {}).get("text") or "")[:40]
-        return f"  [{ts}] {reaction} {name} -> {note_text}"
+        parts.append(("ansicyan", "reaction "))
+        parts.append(("", f"{reaction} "))
+        parts.append(("bold", f"{name} "))
+        parts.append(("", f"-> {note_text}"))
     elif ntype == "reply":
         text = (notif.get("note", {}).get("text") or "")[:60]
-        return f"  [{ts}] reply {name}: {text}"
+        parts.append(("ansicyan", "reply "))
+        parts.append(("bold", f"{name}: "))
+        parts.append(("", text))
     elif ntype == "renote":
-        return f"  [{ts}] renote {name}"
+        parts.append(("ansicyan", "renote "))
+        parts.append(("bold", name))
     elif ntype == "follow":
-        return f"  [{ts}] follow {name}"
+        parts.append(("ansicyan", "follow "))
+        parts.append(("bold", name))
     elif ntype == "mention":
         text = (notif.get("note", {}).get("text") or "")[:60]
-        return f"  [{ts}] mention {name}: {text}"
+        parts.append(("ansicyan", "mention "))
+        parts.append(("bold", f"{name}: "))
+        parts.append(("", text))
     elif ntype == "quote":
         text = (notif.get("note", {}).get("text") or "")[:60]
-        return f"  [{ts}] quote {name}: {text}"
+        parts.append(("ansicyan", "quote "))
+        parts.append(("bold", f"{name}: "))
+        parts.append(("", text))
     else:
-        return f"  [{ts}] {ntype} {name}"
+        parts.append(("ansicyan", f"{ntype} "))
+        parts.append(("bold", name))
+
+    parts.append(("", "\n"))
+    return parts
 
 
 NOTE_ID_COMMANDS = ("reply", "renote", "react")
@@ -265,7 +289,7 @@ class MisskeyCLI:
                 return
             self._collect_note_ids(notes)
             for note in reversed(notes):
-                print(_format_note(note))
+                print_formatted_text(FormattedText(_format_note(note)))
                 print()
         except Exception as e:
             print(f"エラー: {e}")
@@ -387,7 +411,7 @@ class MisskeyCLI:
             if note_ids:
                 self._collect_note_ids([{"id": nid} for nid in note_ids])
             for n in notifs:
-                print(_format_notification(n))
+                print_formatted_text(FormattedText(_format_notification(n)))
         except Exception as e:
             print(f"エラー: {e}")
 
