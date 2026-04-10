@@ -118,10 +118,23 @@ def _format_notification(notif):
 NOTE_ID_COMMANDS = ("reply", "renote", "react")
 
 
+def _note_summary(note):
+    """Extract id, username and short text snippet from a note dict."""
+    user = note.get("user", {})
+    username = user.get("username", "???")
+    text = note.get("text") or ""
+    if not text and note.get("renote"):
+        text = "RN: " + (note["renote"].get("text") or "")
+    if not text and note.get("cw"):
+        text = f"CW: {note['cw']}"
+    snippet = text[:40].replace("\n", " ")
+    return note.get("id", ""), username, snippet
+
+
 class MisskeyCompleter(Completer):
-    def __init__(self, get_emoji_names, get_note_ids):
+    def __init__(self, get_emoji_names, get_note_meta):
         self._get_emoji_names = get_emoji_names
-        self._get_note_ids = get_note_ids
+        self._get_note_meta = get_note_meta
 
     def get_completions(self, document, complete_event):
         text = document.text_before_cursor
@@ -138,13 +151,16 @@ class MisskeyCompleter(Completer):
         cmd = parts[0]
         # Current word being typed (empty if trailing space)
         current = parts[-1] if not text.endswith(" ") else ""
-        arg_pos = len(parts) - 1 if text.endswith(" ") else len(parts) - 1
+        # Position of the current/next argument (1 = first arg)
+        arg_pos = len(parts) if text.endswith(" ") else len(parts) - 1
 
         # Note ID completion (first arg of reply/renote/react)
-        if cmd in NOTE_ID_COMMANDS and arg_pos <= 1:
-            for nid in self._get_note_ids():
+        if cmd in NOTE_ID_COMMANDS and arg_pos == 1:
+            for meta in self._get_note_meta():
+                nid = meta["id"]
                 if nid.startswith(current):
-                    yield Completion(nid, start_position=-len(current))
+                    display_meta = f"@{meta['username']}: {meta['snippet']}"
+                    yield Completion(nid, start_position=-len(current), display_meta=display_meta)
             return
 
         if cmd == "tl" and len(parts) <= 2:
@@ -162,7 +178,7 @@ class MisskeyCompleter(Completer):
                 if v.startswith(current):
                     yield Completion(v, start_position=-len(current))
 
-        elif cmd == "react" and arg_pos >= 2:
+        elif cmd == "react" and arg_pos == 2:
             # Emoji name completion (substring match)
             current_lower = current.lower()
             for name in self._get_emoji_names():
@@ -174,7 +190,7 @@ class MisskeyCLI:
     def __init__(self):
         self.username = None
         self._emoji_cache = None
-        self._note_ids = []
+        self._note_meta = []
         self.client = MisskeyClient()
         if self.client.logged_in:
             try:
@@ -188,7 +204,7 @@ class MisskeyCLI:
         config.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         self.session = PromptSession(
             history=FileHistory(HISTORY_FILE),
-            completer=MisskeyCompleter(self._get_emoji_names, self._get_note_ids),
+            completer=MisskeyCompleter(self._get_emoji_names, self._get_note_meta),
         )
 
     def _get_emoji_names(self):
@@ -200,19 +216,19 @@ class MisskeyCLI:
                 self._emoji_cache = []
         return self._emoji_cache or []
 
-    def _get_note_ids(self):
-        return self._note_ids
+    def _get_note_meta(self):
+        return self._note_meta
 
-    def _collect_note_ids(self, notes):
-        """Add note IDs to cache (most recent first, deduped)."""
-        seen = set(self._note_ids)
-        new_ids = []
+    def _collect_notes(self, notes):
+        """Add note metadata to cache (most recent first, deduped)."""
+        seen = {m["id"] for m in self._note_meta}
+        new_meta = []
         for note in notes:
-            nid = note.get("id", "")
+            nid, username, snippet = _note_summary(note)
             if nid and nid not in seen:
-                new_ids.append(nid)
+                new_meta.append({"id": nid, "username": username, "snippet": snippet})
                 seen.add(nid)
-        self._note_ids = new_ids + self._note_ids
+        self._note_meta = new_meta + self._note_meta
 
     def _get_prompt(self):
         if self.username and self.client.host:
@@ -287,7 +303,7 @@ class MisskeyCLI:
             if not notes:
                 print("ノートがありません。")
                 return
-            self._collect_note_ids(notes)
+            self._collect_notes(notes)
             for note in reversed(notes):
                 print_formatted_text(FormattedText(_format_note(note)))
                 print()
@@ -407,9 +423,9 @@ class MisskeyCLI:
             if not notifs:
                 print("通知はありません。")
                 return
-            note_ids = [n["note"]["id"] for n in notifs if n.get("note", {}).get("id")]
-            if note_ids:
-                self._collect_note_ids([{"id": nid} for nid in note_ids])
+            notif_notes = [n["note"] for n in notifs if n.get("note", {}).get("id")]
+            if notif_notes:
+                self._collect_notes(notif_notes)
             for n in notifs:
                 print_formatted_text(FormattedText(_format_notification(n)))
         except Exception as e:
