@@ -15,6 +15,12 @@ from . import config
 HISTORY_FILE = str(config.CONFIG_DIR / "history")
 
 VISIBILITIES = ("public", "home", "followers", "specified")
+# Wider to narrower
+VISIBILITY_RANK = {"public": 0, "home": 1, "followers": 2, "specified": 3}
+
+
+def _narrower_visibility(a, b):
+    return a if VISIBILITY_RANK.get(a, 0) >= VISIBILITY_RANK.get(b, 0) else b
 TL_TYPES = ("home", "local", "hybrid", "global")
 
 COMMANDS = {
@@ -481,7 +487,10 @@ class MisskeyCLI:
             return
 
         orig_visibility = original.get("visibility", "public")
-        visibility = explicit_visibility or orig_visibility
+        if explicit_visibility:
+            visibility = explicit_visibility
+        else:
+            visibility = _narrower_visibility(config.get_default_visibility(), orig_visibility)
 
         orig_user = original.get("user", {}) or {}
         orig_user_id = orig_user.get("id")

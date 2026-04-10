@@ -42,7 +42,7 @@ docker run -it --user $(id -u):$(id -g) \
 visibility: `public` / `home` / `followers` / `specified`
 
 リプライ時:
-- visibility 省略時は元ノートと同じ範囲を継承します (誤って広い範囲に投稿しないように)
+- visibility 省略時は **`default_visibility` と元ノートの visibility のうち狭い方** を採用します (元より広げず、自分の好みより広げず)
 - 元投稿者へのメンション (`@user[@host]`) は自動で先頭に付与されます (自分自身へのリプライ時はスキップ)
 - 元ノートが `specified` の場合、元の `visibleUserIds` と元投稿者を引き継ぎます
 
