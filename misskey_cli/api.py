@@ -1,3 +1,6 @@
+import html
+import re
+import urllib.parse
 import uuid
 import webbrowser
 
@@ -13,6 +16,10 @@ PERMISSIONS = [
     "write:reactions",
 ]
 
+NEKONOVERSE_SOFTWARE = "nekonoverse"
+NEKONOVERSE_SCOPES = "read write follow"
+NEKONOVERSE_OOB_REDIRECT = "urn:ietf:wg:oauth:2.0:oob"
+
 # Software families that speak MiAuth (Misskey-derived)
 MIAUTH_SOFTWARE = {
     "misskey",
@@ -26,6 +33,20 @@ MIAUTH_SOFTWARE = {
     "catodon",
     "magnetar",
 }
+
+
+def parse_host_arg(arg):
+    """Parse a `login` argument into (host, scheme).
+
+    Accepts ``host``, ``http://host[:port]`` or ``https://host[:port]``.
+    Defaults to https when no scheme prefix is present.
+    """
+    s = arg.strip()
+    if s.startswith("http://"):
+        return s[len("http://"):].rstrip("/"), "http"
+    if s.startswith("https://"):
+        return s[len("https://"):].rstrip("/"), "https"
+    return s.rstrip("/"), "https"
 
 
 def detect_software(host, scheme="https"):
@@ -52,10 +73,12 @@ def detect_software(host, scheme="https"):
         return None
 
 
-class MisskeyClient:
+class _BaseClient:
+    """Shared host/token/scheme plumbing for both client implementations."""
+
     def __init__(self, host=None, token=None, scheme="https"):
-        self.host = host or config.get_host()
-        self.token = token or config.get_token()
+        self.host = host
+        self.token = token
         self.scheme = scheme
 
     @property
@@ -63,8 +86,18 @@ class MisskeyClient:
         return self.host is not None and self.token is not None
 
     def _url(self, path):
-        return f"{self.scheme}://{self.host}/{path}"
+        return f"{self.scheme}://{self.host}/{path.lstrip('/')}"
 
+    @staticmethod
+    def _open_auth_url(url):
+        print(f"ブラウザで以下のURLを開いて認証してください:\n{url}")
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+
+class MisskeyClient(_BaseClient):
     def _post(self, endpoint, **params):
         body = {"i": self.token, **params}
         resp = requests.post(self._url(f"api/{endpoint}"), json=body, timeout=30)
@@ -79,11 +112,7 @@ class MisskeyClient:
         permissions = ",".join(PERMISSIONS)
         auth_url = self._url(f"miauth/{session_id}?name=misskey-cli&permission={permissions}")
 
-        print(f"ブラウザで以下のURLを開いて認証してください:\n{auth_url}")
-        try:
-            webbrowser.open(auth_url)
-        except Exception:
-            pass
+        self._open_auth_url(auth_url)
 
         input("\n認証が完了したらEnterを押してください...")
 
@@ -96,9 +125,7 @@ class MisskeyClient:
 
         self.token = data["token"]
         self.host = host
-        user = data.get("user") or {}
-        config.save_credentials(host, self.token, username=user.get("username"))
-        return user
+        return data.get("user") or {}
 
     def i(self):
         return self._post("i")
@@ -141,3 +168,279 @@ class MisskeyClient:
         resp = requests.post(self._url("api/emojis"), json={}, timeout=30)
         resp.raise_for_status()
         return resp.json().get("emojis", [])
+
+
+class NekonoverseClient(_BaseClient):
+    """Mastodon-compatible client for Nekonoverse.
+
+    Methods normalize Mastodon NoteResponse / Notification into Misskey-shaped
+    dicts so the CLI's existing formatters and reply logic work unchanged.
+    """
+
+    _VIS_OUT = {"home": "unlisted", "specified": "direct"}
+    _VIS_IN = {"unlisted": "home", "direct": "specified"}
+
+    def _headers(self):
+        h = {"Accept": "application/json"}
+        if self.token:
+            h["Authorization"] = f"Bearer {self.token}"
+        return h
+
+    def _get(self, path, **params):
+        resp = requests.get(self._url(path), params=params or None, headers=self._headers(), timeout=30)
+        resp.raise_for_status()
+        return resp.json() if resp.content else None
+
+    def _post(self, path, json=None, data=None):
+        resp = requests.post(
+            self._url(path),
+            json=json,
+            data=data,
+            headers=self._headers(),
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json() if resp.content else None
+
+    # ----- Auth (OAuth OOB) -----
+
+    def login(self, host):
+        self.host = host
+        # Step 1: register an app on the server.
+        app_resp = requests.post(
+            self._url("api/v1/apps"),
+            json={
+                "client_name": "misskey-cli",
+                "redirect_uris": NEKONOVERSE_OOB_REDIRECT,
+                "scopes": NEKONOVERSE_SCOPES,
+            },
+            timeout=30,
+        )
+        app_resp.raise_for_status()
+        app = app_resp.json()
+        client_id = app["client_id"]
+        client_secret = app["client_secret"]
+
+        # Step 2: open the OAuth authorize page.
+        auth_url = self._url(
+            "oauth/authorize?"
+            + urllib.parse.urlencode(
+                {
+                    "response_type": "code",
+                    "client_id": client_id,
+                    "redirect_uri": NEKONOVERSE_OOB_REDIRECT,
+                    "scope": NEKONOVERSE_SCOPES,
+                }
+            )
+        )
+        self._open_auth_url(auth_url)
+
+        # Step 3: paste the OOB authorization code.
+        code = input("\n認可コードを貼り付けて Enter: ").strip()
+        if not code:
+            raise RuntimeError("認可コードが入力されませんでした")
+
+        # Step 4: exchange the code for an access token.
+        token_resp = requests.post(
+            self._url("oauth/token"),
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": NEKONOVERSE_OOB_REDIRECT,
+                "scope": NEKONOVERSE_SCOPES,
+            },
+            timeout=30,
+        )
+        token_resp.raise_for_status()
+        self.token = token_resp.json()["access_token"]
+
+        # Step 5: identify the user.
+        me = self._get("api/v1/accounts/verify_credentials")
+        return {
+            "id": me.get("id"),
+            "username": me.get("username"),
+            "name": me.get("display_name") or me.get("username"),
+        }
+
+    # ----- API methods (normalized) -----
+
+    def i(self):
+        me = self._get("api/v1/accounts/verify_credentials")
+        return {
+            "id": me.get("id"),
+            "username": me.get("username"),
+            "name": me.get("display_name") or me.get("username"),
+            "description": self._strip_html(me.get("note") or ""),
+            "notesCount": me.get("statuses_count", 0),
+            "followingCount": me.get("following_count", 0),
+            "followersCount": me.get("followers_count", 0),
+        }
+
+    def timeline(self, tl_type="home", limit=10):
+        if tl_type == "home":
+            statuses = self._get("api/v1/timelines/home", limit=limit)
+        elif tl_type == "local":
+            statuses = self._get("api/v1/timelines/public", local="true", limit=limit)
+        elif tl_type == "hybrid":
+            # Mastodon has no hybrid timeline; fall back to local.
+            statuses = self._get("api/v1/timelines/public", local="true", limit=limit)
+        elif tl_type == "global":
+            statuses = self._get("api/v1/timelines/public", limit=limit)
+        else:
+            raise ValueError(f"不明なタイムライン: {tl_type}")
+        return [self._normalize_note(s) for s in (statuses or [])]
+
+    def create_note(self, text, visibility="public", cw=None, reply_id=None, visible_user_ids=None):
+        body = {
+            "status": text,
+            "visibility": self._VIS_OUT.get(visibility, visibility),
+        }
+        if cw:
+            body["spoiler_text"] = cw
+        if reply_id:
+            body["in_reply_to_id"] = reply_id
+        # visible_user_ids is Misskey-only; Mastodon relies on @mentions in text.
+        status = self._post("api/v1/statuses", json=body)
+        return {"createdNote": self._normalize_note(status)} if status else None
+
+    def show_note(self, note_id):
+        s = self._get(f"api/v1/statuses/{note_id}")
+        return self._normalize_note(s)
+
+    def renote(self, note_id):
+        s = self._post(f"api/v1/statuses/{note_id}/reblog")
+        return self._normalize_note(s) if s else None
+
+    def react(self, note_id, reaction):
+        # CLI passes the reaction wrapped in colons (e.g. ":neko:").
+        # Nekonoverse's emoji reaction endpoint takes the bare shortcode in the
+        # path; unicode emoji are also accepted as-is.
+        if len(reaction) >= 2 and reaction.startswith(":") and reaction.endswith(":"):
+            emoji = reaction[1:-1]
+        else:
+            emoji = reaction
+        encoded = urllib.parse.quote(emoji, safe="")
+        return self._post(f"api/v1/statuses/{note_id}/react/{encoded}")
+
+    def notifications(self, limit=10):
+        notifs = self._get("api/v1/notifications", limit=limit)
+        return [self._normalize_notif(n) for n in (notifs or [])]
+
+    def emojis(self):
+        emojis = self._get("api/v1/custom_emojis")
+        return [{"name": e["shortcode"]} for e in (emojis or []) if e.get("shortcode")]
+
+    # ----- Normalization helpers -----
+
+    def _normalize_actor(self, actor):
+        if not actor:
+            return {}
+        acct = actor.get("acct") or ""
+        host = None
+        if "@" in acct:
+            _, _, host = acct.partition("@")
+        return {
+            "id": actor.get("id"),
+            "username": actor.get("username"),
+            "name": actor.get("display_name") or actor.get("username"),
+            "host": host,
+        }
+
+    @staticmethod
+    def _normalize_reactions(status):
+        def collect(items):
+            out = {}
+            for r in items or []:
+                name = r.get("name") or r.get("shortcode")
+                if name:
+                    out[name] = r.get("count", 0)
+            return out
+
+        # Fedibird-style emoji_reactions (preferred — preserves shortcodes),
+        # falling back to Mastodon ReactionSummary.
+        return collect(status.get("emoji_reactions")) or collect(status.get("reactions"))
+
+    def _normalize_note(self, s):
+        if not s:
+            return None
+        text = s.get("source")
+        if not text:
+            text = self._strip_html(s.get("content") or "")
+        visibility = self._VIS_IN.get(s.get("visibility"), s.get("visibility") or "public")
+        renote = None
+        if s.get("reblog"):
+            renote = self._normalize_note(s["reblog"])
+        return {
+            "id": s.get("id"),
+            "createdAt": s.get("published") or s.get("created_at"),
+            "user": self._normalize_actor(s.get("account") or s.get("actor")),
+            "text": text,
+            "cw": s.get("spoiler_text") or None,
+            "visibility": visibility,
+            "renote": renote,
+            "reactions": self._normalize_reactions(s),
+            "visibleUserIds": [],
+        }
+
+    def _normalize_notif(self, n):
+        type_map = {"reblog": "renote", "favourite": "reaction"}
+        raw_type = n.get("type")
+        reaction = None
+        if raw_type == "favourite":
+            reaction = "⭐"
+        elif raw_type == "reaction":
+            # Fedibird-style emoji reaction notification.
+            emoji = n.get("emoji") or {}
+            reaction = (emoji.get("shortcode") and f":{emoji['shortcode']}:") or n.get("emoji_name") or "⭐"
+        return {
+            "type": type_map.get(raw_type, raw_type),
+            "createdAt": n.get("created_at"),
+            "user": self._normalize_actor(n.get("account")),
+            "note": self._normalize_note(n.get("status")) if n.get("status") else None,
+            "reaction": reaction,
+        }
+
+    _RE_BR = re.compile(r"<br\s*/?>", re.IGNORECASE)
+    _RE_PARA_BREAK = re.compile(r"</p>\s*<p[^>]*>", re.IGNORECASE)
+    _RE_P_OPEN = re.compile(r"<p[^>]*>", re.IGNORECASE)
+    _RE_P_CLOSE = re.compile(r"</p>", re.IGNORECASE)
+    _RE_TAG = re.compile(r"<[^>]+>")
+
+    @classmethod
+    def _strip_html(cls, s):
+        if not s:
+            return ""
+        # Convert paragraph and break tags to plain newlines first.
+        s = cls._RE_BR.sub("\n", s)
+        s = cls._RE_PARA_BREAK.sub("\n\n", s)
+        s = cls._RE_P_OPEN.sub("", s)
+        s = cls._RE_P_CLOSE.sub("", s)
+        # Drop any remaining tags.
+        s = cls._RE_TAG.sub("", s)
+        return html.unescape(s).strip()
+
+
+def make_client(host=None, token=None, software=None, scheme=None):
+    """Build the appropriate client for the active (or given) account.
+
+    When ``software`` is provided explicitly (e.g. during ``cmd_login``),
+    no fields are auto-loaded from the active account. Otherwise the active
+    account is fetched once and any unspecified fields default to it.
+    """
+    if software is None:
+        acct = config.get_active_account()
+        if acct:
+            if host is None:
+                host = acct.host
+            if token is None:
+                token = acct.token
+            software = acct.software
+            if scheme is None:
+                scheme = acct.scheme
+    if scheme is None:
+        scheme = "https"
+    if software == NEKONOVERSE_SOFTWARE:
+        return NekonoverseClient(host=host, token=token, scheme=scheme)
+    return MisskeyClient(host=host, token=token, scheme=scheme)

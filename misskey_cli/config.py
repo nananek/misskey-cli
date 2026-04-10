@@ -28,7 +28,14 @@ def list_accounts():
     from .db import get_session, Account
     with get_session() as s:
         return [
-            {"id": a.id, "host": a.host, "username": a.username, "active": bool(a.active)}
+            {
+                "id": a.id,
+                "host": a.host,
+                "username": a.username,
+                "active": bool(a.active),
+                "software": a.software,
+                "scheme": a.scheme,
+            }
             for a in s.query(Account).order_by(Account.id).all()
         ]
 
@@ -84,16 +91,6 @@ def delete_active_account():
         return True
 
 
-def get_host():
-    acct = get_active_account()
-    return acct.host if acct else None
-
-
-def get_token():
-    acct = get_active_account()
-    return acct.token if acct else None
-
-
 def get_default_visibility():
     from .db import get_session, Settings
     with get_session() as s:
@@ -130,7 +127,7 @@ def set_default_visibility(visibility):
         s.commit()
 
 
-def save_credentials(host, token, username=None):
+def save_credentials(host, token, username=None, software=None, scheme=None):
     from .db import get_session, Account
     with get_session() as s:
         # deactivate all
@@ -148,7 +145,18 @@ def save_credentials(host, token, username=None):
             acct.token = token
             if username:
                 acct.username = username
+            if software is not None:
+                acct.software = software
+            if scheme is not None:
+                acct.scheme = scheme
             acct.active = True
         else:
-            s.add(Account(host=host, token=token, username=username, active=True))
+            s.add(Account(
+                host=host,
+                token=token,
+                username=username,
+                active=True,
+                software=software,
+                scheme=scheme,
+            ))
         s.commit()

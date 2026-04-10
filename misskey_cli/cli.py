@@ -9,7 +9,13 @@ from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import FileHistory
 
-from .api import MisskeyClient, detect_software, MIAUTH_SOFTWARE
+from .api import (
+    MIAUTH_SOFTWARE,
+    NEKONOVERSE_SOFTWARE,
+    detect_software,
+    make_client,
+    parse_host_arg,
+)
 from . import config
 
 HISTORY_FILE = str(config.CONFIG_DIR / "history")
@@ -277,7 +283,7 @@ class MisskeyCLI:
         self.user_id = None
         self._emoji_cache = None
         self._note_meta = []
-        self.client = MisskeyClient()
+        self.client = make_client()
         if self.client.logged_in:
             try:
                 me = self.client.i()
@@ -391,32 +397,43 @@ class MisskeyCLI:
             print(f"  {name:22s} {desc}")
 
     def cmd_login(self, arg):
-        host = arg.strip()
-        if not host:
+        if not arg.strip():
             print("使い方: login <host>  例: login misskey.caligula-sea.net")
             return
-        software = detect_software(host)
+        host, scheme = parse_host_arg(arg)
+        software = detect_software(host, scheme=scheme)
         if software is None:
             print(f"サーバー情報を取得できませんでした: {host}")
             print("(nodeinfo にアクセスできません。ホスト名を確認してください)")
             return
         print(f"検出: {software}")
-        if software not in MIAUTH_SOFTWARE:
-            print(f"このサーバーは未対応です ({software})。現状 MiAuth 対応 (Misskey 系) のみサポートしています。")
+        if software not in MIAUTH_SOFTWARE and software != NEKONOVERSE_SOFTWARE:
+            print(f"このサーバーは未対応です ({software})。MiAuth 対応 (Misskey 系) と Nekonoverse のみサポートしています。")
             return
+        client = make_client(software=software, scheme=scheme)
         try:
-            user = self.client.login(host)
-            name = user.get("name") or user["username"]
-            self.username = user["username"]
+            user = client.login(host)
+            username = user.get("username")
+            if not username:
+                raise RuntimeError("ユーザー情報の取得に失敗しました")
+            config.save_credentials(
+                host,
+                client.token,
+                username=username,
+                software=software,
+                scheme=scheme,
+            )
+            self.client = client
+            self.username = username
             self.user_id = user.get("id")
             self._emoji_cache = None
             self._note_meta = []
-            print(f"ログイン成功: {name}")
+            print(f"ログイン成功: {user.get('name') or username}")
         except Exception as e:
             print(f"ログイン失敗: {e}")
 
     def _reload_client(self):
-        self.client = MisskeyClient()
+        self.client = make_client()
         self.username = None
         self.user_id = None
         self._emoji_cache = None
@@ -440,7 +457,13 @@ class MisskeyCLI:
             for a in accounts:
                 mark = "*" if a["active"] else " "
                 uname = f"@{a['username']}" if a["username"] else "(unknown)"
-                print(f"  {mark} {uname}@{a['host']}")
+                tags = []
+                if a.get("software"):
+                    tags.append(a["software"])
+                if a.get("scheme") == "http":
+                    tags.append("http")
+                tag_str = f"  ({', '.join(tags)})" if tags else ""
+                print(f"  {mark} {uname}@{a['host']}{tag_str}")
             return
         sub = parts[0]
         if sub == "use":

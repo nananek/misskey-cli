@@ -16,6 +16,8 @@ class Account(Base):
     username = Column(String)
     token = Column(String, nullable=False)
     active = Column(Boolean, nullable=False, default=False)
+    software = Column(String)
+    scheme = Column(String)
     created_at = Column(DateTime, server_default=func.now())
 
 

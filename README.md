@@ -20,11 +20,19 @@ docker run -it --user $(id -u):$(id -g) \
 
 `TZ` 環境変数でタイムラインの日時表示タイムゾーンを指定できます (省略時は UTC)。
 
+## 対応サーバー
+
+- **Misskey 系** (Misskey / Sharkey / Firefish / Iceshrimp / CherryPick / Foundkey / Meisskey / Catodon / Magnetar): MiAuth でログイン
+- **Nekonoverse**: Mastodon 互換 OAuth (OOB) でログイン
+
+`login <host>` 実行時に nodeinfo からサーバー種別を自動判別します。
+ローカル検証用に `login http://localhost:8000` のように `http://` / `https://` プレフィックスを付けることもできます (省略時は https)。
+
 ## コマンド一覧
 
 | コマンド | 説明 |
 |---------|------|
-| `login <host>` | インスタンスにログイン (MiAuth) |
+| `login <host>` | インスタンスにログイン (Misskey 系は MiAuth、Nekonoverse は OAuth OOB を自動選択) |
 | `account` | 登録済みアカウント一覧 (アクティブに `*`) |
 | `account use @user@host` | アクティブアカウントを切り替え (1ホスト1アカウントなら host のみでも可) |
 | `logout` | アクティブアカウントを削除 |
