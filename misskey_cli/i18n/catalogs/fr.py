@@ -19,6 +19,7 @@ CATALOG = {
     "cmd.help.reply_text": "Répondre depuis la ligne de commande",
     "cmd.help.renote": "Republier une note",
     "cmd.help.react": "Réagir à une note",
+    "cmd.help.preview": "Prévisualiser une image attachée dans le terminal",
     "cmd.help.notif": "Lister les notifications",
     "cmd.help.list": "Afficher les listes / sélectionner la liste active",
     "cmd.help.lang": "Afficher / changer la langue d'affichage",
@@ -35,6 +36,7 @@ CATALOG = {
     "usage.reply_text": "Utilisation : reply_text <note_id> [visibility] <text>",
     "usage.renote": "Utilisation : renote <note_id>",
     "usage.react": "Utilisation : react <note_id> <emoji>",
+    "usage.preview": "Utilisation : preview <note_id> [image_index]",
     "usage.list_use": "Utilisation : list use <name_or_id>",
 
     # ----- Status / confirmation -----
@@ -75,6 +77,8 @@ CATALOG = {
     "error.invalid_choice": "Valeur invalide. Choix : {choices}",
     "error.fetch_parent_failed": "Échec de la récupération de la note parente : {message}",
     "error.invalid_visibility": "Visibilité invalide : {value}",
+    "error.index_out_of_range": "Index hors limites : {index} (max : {max})",
+    "error.preview_failed": "Échec de la prévisualisation : {message}",
     "error.unknown_command": "Commande inconnue : {cmd} (tapez 'help' pour la liste)",
     "error.unknown_timeline": "Fil inconnu : {tl_type}",
     "error.list_id_required": "list_id est requis pour tl_type='list'",
@@ -89,6 +93,7 @@ CATALOG = {
     "empty.note": "Les notes vides ne sont pas publiées.",
     "empty.reply": "Les réponses vides ne sont pas envoyées.",
     "empty.notifications": "Aucune notification.",
+    "empty.note_images": "Cette note ne contient aucune image jointe.",
     "empty.accounts": "Aucun compte. Lancez 'login <host>' pour vous connecter.",
     "empty.lists": "Aucune liste sur ce serveur.",
 

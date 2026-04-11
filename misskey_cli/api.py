@@ -135,6 +135,59 @@ class _BaseClient:
 
 
 class MisskeyClient(_BaseClient):
+    _MIME_TYPE_PREFIX = (
+        ("image/", "image"),
+        ("video/", "video"),
+        ("audio/", "audio"),
+    )
+
+    @classmethod
+    def _normalize_files(cls, files):
+        """Canonicalize Misskey raw ``files`` into the shared schema.
+
+        Maps mime prefixes to the closed set {image, video, audio, gifv, file}
+        so downstream code (``_format_note`` / ``cmd_preview``) never has to
+        sniff mime strings.
+        """
+        out = []
+        for f in files or []:
+            url = f.get("url")
+            if not url:
+                continue
+            mime = (f.get("type") or "").lower()
+            kind = "file"
+            for prefix, name in cls._MIME_TYPE_PREFIX:
+                if mime.startswith(prefix):
+                    kind = name
+                    break
+            props = f.get("properties") or {}
+            out.append({
+                "url": url,
+                "type": kind,
+                "sensitive": bool(f.get("isSensitive")),
+                "alt": f.get("comment"),
+                "width": props.get("width"),
+                "height": props.get("height"),
+            })
+        return out
+
+    @classmethod
+    def _inject_files_on_note(cls, note):
+        """Set ``note["files"]`` in the canonical schema (walking one renote)."""
+        if not isinstance(note, dict):
+            return note
+        note["files"] = cls._normalize_files(note.get("files"))
+        inner = note.get("renote")
+        if isinstance(inner, dict):
+            inner["files"] = cls._normalize_files(inner.get("files"))
+        return note
+
+    @classmethod
+    def _inject_files_on_notes(cls, notes):
+        for n in notes or []:
+            cls._inject_files_on_note(n)
+        return notes
+
     def _post(self, endpoint, **params):
         body = {"i": self.token, **params}
         resp = requests.post(self._url(f"api/{endpoint}"), json=body, timeout=30)
@@ -171,7 +224,8 @@ class MisskeyClient(_BaseClient):
         if tl_type == "list":
             if not list_id:
                 raise ValueError(_("error.list_id_required"))
-            return self._post("notes/user-list-timeline", listId=list_id, limit=limit)
+            notes = self._post("notes/user-list-timeline", listId=list_id, limit=limit)
+            return self._inject_files_on_notes(notes)
         endpoints = {
             "home": "notes/timeline",
             "local": "notes/local-timeline",
@@ -181,7 +235,7 @@ class MisskeyClient(_BaseClient):
         endpoint = endpoints.get(tl_type)
         if not endpoint:
             raise ValueError(_("error.unknown_timeline", tl_type=tl_type))
-        return self._post(endpoint, limit=limit)
+        return self._inject_files_on_notes(self._post(endpoint, limit=limit))
 
     def lists(self):
         """Return the user's lists as ``[{"id": ..., "name": ...}]``."""
@@ -203,7 +257,7 @@ class MisskeyClient(_BaseClient):
         return self._post("notes/create", **params)
 
     def show_note(self, note_id):
-        return self._post("notes/show", noteId=note_id)
+        return self._inject_files_on_note(self._post("notes/show", noteId=note_id))
 
     def renote(self, note_id):
         return self._post("notes/create", renoteId=note_id)
@@ -212,7 +266,12 @@ class MisskeyClient(_BaseClient):
         return self._post("notes/reactions/create", noteId=note_id, reaction=reaction)
 
     def notifications(self, limit=10):
-        return self._post("i/notifications", limit=limit)
+        notifs = self._post("i/notifications", limit=limit)
+        for n in notifs or []:
+            inner = n.get("note") if isinstance(n, dict) else None
+            if isinstance(inner, dict):
+                self._inject_files_on_note(inner)
+        return notifs
 
     def emojis(self):
         resp = requests.post(self._url("api/emojis"), json={}, timeout=30)
@@ -232,6 +291,12 @@ class MastodonClient(_BaseClient):
 
     _VIS_OUT = {"home": "unlisted", "specified": "direct"}
     _VIS_IN = {"unlisted": "home", "direct": "specified"}
+    _MEDIA_TYPE_MAP = {
+        "image": "image",
+        "video": "video",
+        "gifv": "gifv",
+        "audio": "audio",
+    }
     # Detects a real `:shortcode:` (which Mastodon-family servers accept as-is)
     # so we can unwrap unicode emoji that the CLI wraps in colons before
     # handing it down.
@@ -490,6 +555,31 @@ class MastodonClient(_BaseClient):
             or collect(status.get("reactions"))
         )
 
+    @classmethod
+    def _normalize_files_mastodon(cls, media, note_sensitive):
+        """Canonicalize Mastodon ``media_attachments`` into the shared schema.
+
+        ``note_sensitive`` (the note-level flag) is stamped onto every
+        attachment since Mastodon does not expose a per-attachment flag.
+        """
+        out = []
+        for m in media or []:
+            url = m.get("url") or m.get("preview_url")
+            if not url:
+                continue
+            raw_type = (m.get("type") or "").lower()
+            kind = cls._MEDIA_TYPE_MAP.get(raw_type, "file")
+            meta = (m.get("meta") or {}).get("original") or {}
+            out.append({
+                "url": url,
+                "type": kind,
+                "sensitive": bool(note_sensitive),
+                "alt": m.get("description"),
+                "width": meta.get("width"),
+                "height": meta.get("height"),
+            })
+        return out
+
     def _normalize_note(self, s):
         if not s:
             return None
@@ -500,6 +590,10 @@ class MastodonClient(_BaseClient):
         renote = None
         if s.get("reblog"):
             renote = self._normalize_note(s["reblog"])
+        files = self._normalize_files_mastodon(
+            s.get("media_attachments"),
+            s.get("sensitive"),
+        )
         return {
             "id": s.get("id"),
             "createdAt": s.get("published") or s.get("created_at"),
@@ -510,6 +604,7 @@ class MastodonClient(_BaseClient):
             "renote": renote,
             "reactions": self._normalize_reactions(s),
             "visibleUserIds": [],
+            "files": files,
         }
 
     def _normalize_notif(self, n):

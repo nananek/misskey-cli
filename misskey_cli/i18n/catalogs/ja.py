@@ -19,6 +19,7 @@ CATALOG = {
     "cmd.help.reply_text": "テキスト直接指定でリプライ",
     "cmd.help.renote": "リノート",
     "cmd.help.react": "リアクション",
+    "cmd.help.preview": "添付画像をターミナルでプレビュー",
     "cmd.help.notif": "通知一覧",
     "cmd.help.list": "リスト一覧表示 / アクティブリスト切替",
     "cmd.help.lang": "表示言語の確認 / 変更",
@@ -35,6 +36,7 @@ CATALOG = {
     "usage.reply_text": "使い方: reply_text <note_id> [visibility] <text>",
     "usage.renote": "使い方: renote <note_id>",
     "usage.react": "使い方: react <note_id> <emoji>",
+    "usage.preview": "使い方: preview <note_id> [image_index]",
     "usage.list_use": "使い方: list use <name_or_id>",
 
     # ----- Status / confirmation -----
@@ -75,6 +77,8 @@ CATALOG = {
     "error.invalid_choice": "不正な値です。選択肢: {choices}",
     "error.fetch_parent_failed": "元ノート取得失敗: {message}",
     "error.invalid_visibility": "不正な visibility: {value}",
+    "error.index_out_of_range": "インデックスが範囲外です: {index} (最大: {max})",
+    "error.preview_failed": "画像のプレビューに失敗しました: {message}",
     "error.unknown_command": "不明なコマンド: {cmd} ('help' で一覧表示)",
     "error.unknown_timeline": "不明なタイムライン: {tl_type}",
     "error.list_id_required": "tl_type='list' には list_id が必要です",
@@ -89,6 +93,7 @@ CATALOG = {
     "empty.note": "空のノートは投稿しません。",
     "empty.reply": "空のリプライは送信しません。",
     "empty.notifications": "通知はありません。",
+    "empty.note_images": "このノートには画像の添付がありません。",
     "empty.accounts": "アカウントがありません。'login <host>' でログインしてください。",
     "empty.lists": "このサーバーにリストがありません。",
 

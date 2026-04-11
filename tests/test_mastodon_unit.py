@@ -1,4 +1,5 @@
 """Unit tests for MastodonClient / detect_software (no network, no docker)."""
+import io
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -880,3 +881,493 @@ class TestAliases:
             assert alias in out
         # The section header from the i18n catalog also appears.
         assert "Aliases" in out or "エイリアス" in out or "Alias" in out
+
+
+# ---------- image.rgb_to_256 ----------
+
+
+class TestRgbTo256:
+    def test_pure_black(self):
+        from misskey_cli.image import rgb_to_256
+        assert rgb_to_256(0, 0, 0) == 16
+
+    def test_pure_white(self):
+        from misskey_cli.image import rgb_to_256
+        assert rgb_to_256(255, 255, 255) == 231
+
+    def test_pure_red(self):
+        from misskey_cli.image import rgb_to_256
+        # 16 + 36*5 + 6*0 + 0 = 196
+        assert rgb_to_256(255, 0, 0) == 196
+
+    def test_pure_green(self):
+        from misskey_cli.image import rgb_to_256
+        # 16 + 0 + 6*5 + 0 = 46
+        assert rgb_to_256(0, 255, 0) == 46
+
+    def test_pure_blue(self):
+        from misskey_cli.image import rgb_to_256
+        # 16 + 0 + 0 + 5 = 21
+        assert rgb_to_256(0, 0, 255) == 21
+
+    def test_very_dark_gray_clamps_to_16(self):
+        from misskey_cli.image import rgb_to_256
+        assert rgb_to_256(4, 4, 4) == 16
+
+    def test_very_bright_gray_clamps_to_231(self):
+        from misskey_cli.image import rgb_to_256
+        assert rgb_to_256(250, 250, 250) == 231
+
+    def test_midrange_gray_is_in_grayscale_ramp(self):
+        from misskey_cli.image import rgb_to_256
+        # Grayscale ramp is 232..255.
+        idx = rgb_to_256(128, 128, 128)
+        assert 232 <= idx <= 255
+
+
+# ---------- image.render_image_256 ----------
+
+
+class TestRenderImage256:
+    def _png_bytes(self, size, color):
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", size, color).save(buf, "PNG")
+        return buf.getvalue()
+
+    def test_tiny_image_produces_escape_codes_and_half_block(self):
+        from misskey_cli.image import render_image_256
+        out = render_image_256(self._png_bytes((2, 2), (255, 0, 0)), max_width=80)
+        assert "\u2580" in out
+        assert "\x1b[38;5;196m" in out  # red fg
+        # Every line ends with the SGR reset + newline.
+        assert "\x1b[0m\n" in out
+
+    def test_odd_height_pads_bottom(self):
+        from misskey_cli.image import render_image_256
+        out = render_image_256(self._png_bytes((2, 3), (255, 255, 255)), max_width=80)
+        # 3 rows → ceil(3/2) = 2 output lines.
+        assert out.count("\n") == 2
+
+    def test_resize_caps_width(self):
+        from misskey_cli.image import render_image_256
+        out = render_image_256(self._png_bytes((400, 10), (0, 0, 0)), max_width=20)
+        for line in out.rstrip("\n").split("\n"):
+            assert line.count("\u2580") <= 20
+
+
+# ---------- MisskeyClient._normalize_files ----------
+
+
+class TestMisskeyNormalizeFiles:
+    def test_image_mime_maps_to_image(self):
+        out = MisskeyClient._normalize_files([
+            {
+                "url": "u",
+                "type": "image/png",
+                "isSensitive": False,
+                "comment": "cat",
+                "properties": {"width": 10, "height": 20},
+            }
+        ])
+        assert out == [{
+            "url": "u",
+            "type": "image",
+            "sensitive": False,
+            "alt": "cat",
+            "width": 10,
+            "height": 20,
+        }]
+
+    def test_video_mime(self):
+        out = MisskeyClient._normalize_files([{"url": "u", "type": "video/mp4"}])
+        assert out[0]["type"] == "video"
+
+    def test_audio_mime(self):
+        out = MisskeyClient._normalize_files([{"url": "u", "type": "audio/mpeg"}])
+        assert out[0]["type"] == "audio"
+
+    def test_unknown_mime_becomes_file(self):
+        out = MisskeyClient._normalize_files([{"url": "u", "type": "application/pdf"}])
+        assert out[0]["type"] == "file"
+
+    def test_sensitive_flag_passthrough(self):
+        out = MisskeyClient._normalize_files([
+            {"url": "u", "type": "image/png", "isSensitive": True}
+        ])
+        assert out[0]["sensitive"] is True
+
+    def test_missing_url_is_dropped(self):
+        out = MisskeyClient._normalize_files([{"type": "image/png"}])
+        assert out == []
+
+    def test_empty_input(self):
+        assert MisskeyClient._normalize_files(None) == []
+        assert MisskeyClient._normalize_files([]) == []
+
+
+# ---------- MisskeyClient file injection on returned notes ----------
+
+
+class TestMisskeyInjectsFiles:
+    def test_show_note_injects_files(self):
+        c = MisskeyClient(host="m.example", token="t", scheme="http")
+        with patch("misskey_cli.api.requests.post") as post:
+            post.return_value = MagicMock(
+                status_code=200,
+                content=b"{}",
+                json=lambda: {
+                    "id": "1",
+                    "files": [
+                        {"url": "https://m.example/a.png", "type": "image/png"},
+                    ],
+                },
+            )
+            note = c.show_note("1")
+            assert note["files"] == [{
+                "url": "https://m.example/a.png",
+                "type": "image",
+                "sensitive": False,
+                "alt": None,
+                "width": None,
+                "height": None,
+            }]
+
+    def test_show_note_none_is_safe(self):
+        c = MisskeyClient(host="m.example", token="t", scheme="http")
+        with patch("misskey_cli.api.requests.post") as post:
+            post.return_value = MagicMock(
+                status_code=200, content=b"", json=lambda: None
+            )
+            assert c.show_note("1") is None
+
+    def test_timeline_injects_files_on_each_note(self):
+        c = MisskeyClient(host="m.example", token="t", scheme="http")
+        with patch("misskey_cli.api.requests.post") as post:
+            post.return_value = MagicMock(
+                status_code=200,
+                content=b"[]",
+                json=lambda: [
+                    {"id": "1", "files": [{"url": "u1", "type": "image/png"}]},
+                    {"id": "2", "files": []},
+                ],
+            )
+            notes = c.timeline("home", limit=2)
+            assert notes[0]["files"][0]["type"] == "image"
+            assert notes[1]["files"] == []
+
+    def test_notifications_injects_files_on_embedded_note(self):
+        c = MisskeyClient(host="m.example", token="t", scheme="http")
+        with patch("misskey_cli.api.requests.post") as post:
+            post.return_value = MagicMock(
+                status_code=200,
+                content=b"[]",
+                json=lambda: [
+                    {
+                        "id": "n",
+                        "type": "reply",
+                        "note": {
+                            "id": "a",
+                            "files": [{"url": "u", "type": "image/png"}],
+                        },
+                    }
+                ],
+            )
+            notifs = c.notifications(limit=1)
+            assert notifs[0]["note"]["files"][0]["type"] == "image"
+
+    def test_show_note_normalizes_inner_renote_files(self):
+        c = MisskeyClient(host="m.example", token="t", scheme="http")
+        with patch("misskey_cli.api.requests.post") as post:
+            post.return_value = MagicMock(
+                status_code=200,
+                content=b"{}",
+                json=lambda: {
+                    "id": "1",
+                    "renote": {
+                        "id": "rn",
+                        "files": [{"url": "u", "type": "video/mp4"}],
+                    },
+                },
+            )
+            note = c.show_note("1")
+            assert note["renote"]["files"][0]["type"] == "video"
+
+
+# ---------- MastodonClient._normalize_files_mastodon ----------
+
+
+class TestMastodonNormalizeFiles:
+    def test_image_maps_through(self):
+        out = MastodonClient._normalize_files_mastodon(
+            [{
+                "url": "https://x/a.png",
+                "type": "image",
+                "description": "alt",
+                "meta": {"original": {"width": 100, "height": 50}},
+            }],
+            note_sensitive=False,
+        )
+        assert out == [{
+            "url": "https://x/a.png",
+            "type": "image",
+            "sensitive": False,
+            "alt": "alt",
+            "width": 100,
+            "height": 50,
+        }]
+
+    def test_gifv_stays_distinct_from_image(self):
+        out = MastodonClient._normalize_files_mastodon(
+            [{"url": "https://x/g.mp4", "type": "gifv"}],
+            note_sensitive=False,
+        )
+        assert out[0]["type"] == "gifv"
+
+    def test_unknown_type_becomes_file(self):
+        out = MastodonClient._normalize_files_mastodon(
+            [{"url": "https://x/u.bin", "type": "unknown"}],
+            note_sensitive=False,
+        )
+        assert out[0]["type"] == "file"
+
+    def test_note_level_sensitive_propagates(self):
+        out = MastodonClient._normalize_files_mastodon(
+            [{"url": "https://x/a.png", "type": "image"}],
+            note_sensitive=True,
+        )
+        assert out[0]["sensitive"] is True
+
+    def test_empty_input(self):
+        assert MastodonClient._normalize_files_mastodon(None, False) == []
+        assert MastodonClient._normalize_files_mastodon([], False) == []
+
+    def test_normalize_note_carries_files(self):
+        c = _client("mastodon")
+        note = c._normalize_note({
+            "id": "1",
+            "created_at": "2024-01-01T00:00:00Z",
+            "account": {"id": "2", "username": "alice", "acct": "alice"},
+            "content": "<p>hi</p>",
+            "visibility": "public",
+            "sensitive": True,
+            "media_attachments": [
+                {"url": "https://x/a.png", "type": "image", "description": "alt"},
+            ],
+        })
+        assert note["files"] == [{
+            "url": "https://x/a.png",
+            "type": "image",
+            "sensitive": True,
+            "alt": "alt",
+            "width": None,
+            "height": None,
+        }]
+
+    def test_normalize_note_no_media_returns_empty_list(self):
+        c = _client("mastodon")
+        note = c._normalize_note({
+            "id": "1",
+            "created_at": "2024-01-01T00:00:00Z",
+            "account": {"id": "2", "username": "alice", "acct": "alice"},
+            "content": "<p>hi</p>",
+            "visibility": "public",
+        })
+        assert note["files"] == []
+
+
+# ---------- _format_note attachment footer ----------
+
+
+class TestFormatNoteAttachments:
+    def _base_note(self, **over):
+        note = {
+            "id": "n1",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "user": {"username": "alice", "name": "Alice"},
+            "text": "hi",
+            "reactions": {},
+        }
+        note.update(over)
+        return note
+
+    def test_no_files_no_marker_line(self):
+        from misskey_cli.cli import _format_note
+        joined = "".join(t for _, t in _format_note(self._base_note()))
+        assert "\U0001f4ce" not in joined
+
+    def test_empty_files_no_marker_line(self):
+        from misskey_cli.cli import _format_note
+        joined = "".join(
+            t for _, t in _format_note(self._base_note(files=[]))
+        )
+        assert "\U0001f4ce" not in joined
+
+    def test_files_produce_marker_line(self):
+        from misskey_cli.cli import _format_note
+        note = self._base_note(files=[
+            {"url": "u", "type": "image", "sensitive": False},
+            {"url": "u2", "type": "video", "sensitive": True},
+        ])
+        joined = "".join(t for _, t in _format_note(note))
+        assert "\U0001f4ce" in joined
+        assert "[1]image" in joined
+        assert "[2]video NSFW" in joined
+
+    def test_files_line_uses_ansiblue_style(self):
+        from misskey_cli.cli import _format_note
+        note = self._base_note(files=[{"url": "u", "type": "image"}])
+        parts = _format_note(note)
+        # Find the attachment line — the one containing the clip marker.
+        attachment_parts = [
+            (style, text) for style, text in parts if "\U0001f4ce" in text
+        ]
+        assert attachment_parts
+        assert attachment_parts[0][0] == "ansiblue"
+
+
+# ---------- cmd_preview ----------
+
+
+class TestCmdPreview:
+    def test_no_arg_errors(self, capsys):
+        cli, stub = _build_stub_cli()
+        cli.cmd_preview("")
+        assert capsys.readouterr().err
+        stub.show_note.assert_not_called()
+
+    def test_not_logged_in_errors(self, capsys):
+        cli, stub = _build_stub_cli()
+        stub.logged_in = False
+        cli.cmd_preview("n1")
+        assert capsys.readouterr().err
+        stub.show_note.assert_not_called()
+
+    def test_note_without_images_errors(self, capsys):
+        cli, stub = _build_stub_cli()
+        stub.show_note.return_value = {"id": "n1", "files": []}
+        cli.cmd_preview("n1")
+        assert capsys.readouterr().err
+
+    def test_non_integer_index_errors(self, capsys):
+        cli, stub = _build_stub_cli()
+        stub.show_note.return_value = {
+            "id": "n1",
+            "files": [{"url": "u", "type": "image"}],
+        }
+        cli.cmd_preview("n1 xyz")
+        assert capsys.readouterr().err
+        # Render should not have been attempted.
+        with patch("misskey_cli.image.render_image_256_from_url") as render:
+            render.assert_not_called()
+
+    def test_zero_index_errors(self, capsys):
+        cli, stub = _build_stub_cli()
+        stub.show_note.return_value = {
+            "id": "n1",
+            "files": [{"url": "u", "type": "image"}],
+        }
+        cli.cmd_preview("n1 0")
+        assert capsys.readouterr().err
+
+    def test_index_out_of_range(self, capsys):
+        cli, stub = _build_stub_cli()
+        stub.show_note.return_value = {
+            "id": "n1",
+            "files": [{"url": "u", "type": "image"}],
+        }
+        cli.cmd_preview("n1 5")
+        err = capsys.readouterr().err
+        assert "5" in err
+
+    def test_happy_path_renders_image(self, capsys):
+        cli, stub = _build_stub_cli()
+        stub.show_note.return_value = {
+            "id": "n1",
+            "files": [
+                {"url": "https://x/a.png", "type": "image", "alt": None},
+            ],
+        }
+        with patch(
+            "misskey_cli.image.render_image_256_from_url",
+            return_value="\x1b[38;5;196m\u2580\x1b[0m\n",
+        ) as render:
+            cli.cmd_preview("n1")
+            render.assert_called_once()
+            assert render.call_args[0][0] == "https://x/a.png"
+        out = capsys.readouterr().out
+        assert "\u2580" in out
+
+    def test_alt_text_is_printed_below_image(self, capsys):
+        cli, stub = _build_stub_cli()
+        stub.show_note.return_value = {
+            "id": "n1",
+            "files": [
+                {"url": "https://x/a.png", "type": "image", "alt": "a cat"},
+            ],
+        }
+        with patch(
+            "misskey_cli.image.render_image_256_from_url",
+            return_value="",
+        ):
+            cli.cmd_preview("n1")
+        out = capsys.readouterr().out
+        assert "a cat" in out
+
+    def test_fetch_failure_routes_to_error(self, capsys):
+        cli, stub = _build_stub_cli()
+        stub.show_note.side_effect = RuntimeError("boom")
+        cli.cmd_preview("n1")
+        assert "boom" in capsys.readouterr().err
+
+    def test_render_failure_routes_to_preview_failed(self, capsys):
+        cli, stub = _build_stub_cli()
+        stub.show_note.return_value = {
+            "id": "n1",
+            "files": [{"url": "https://x/a.png", "type": "image"}],
+        }
+        with patch(
+            "misskey_cli.image.render_image_256_from_url",
+            side_effect=RuntimeError("decode fail"),
+        ):
+            cli.cmd_preview("n1")
+        assert "decode fail" in capsys.readouterr().err
+
+    def test_index_is_into_image_only_subset(self):
+        """``preview n1 2`` must render the SECOND IMAGE, not the second file,
+        when the note mixes image and non-image attachments."""
+        cli, stub = _build_stub_cli()
+        stub.show_note.return_value = {
+            "id": "n1",
+            "files": [
+                {"url": "https://x/v.mp4", "type": "video"},
+                {"url": "https://x/a.png", "type": "image"},
+                {"url": "https://x/b.png", "type": "image"},
+            ],
+        }
+        with patch(
+            "misskey_cli.image.render_image_256_from_url",
+            return_value="",
+        ) as render:
+            cli.cmd_preview("n1 2")
+            render.assert_called_once()
+            # The 2nd IMAGE (b.png), not the 2nd file (a.png).
+            assert render.call_args[0][0] == "https://x/b.png"
+
+
+# ---------- Completer & help for preview ----------
+
+
+def test_completer_preview_offers_note_ids():
+    completer = _make_completer(
+        note_meta=[{"id": "n42", "username": "alice", "snippet": "hi"}],
+        lists=[],
+    )
+    results = _complete_text(completer, "preview ")
+    assert "n42" in results
+
+
+def test_help_lists_preview(capsys):
+    cli, _ = _build_stub_cli()
+    cli.cmd_help("")
+    assert "preview" in capsys.readouterr().out

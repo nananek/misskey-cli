@@ -62,6 +62,7 @@ COMMANDS = {
     "reply_text": "cmd.help.reply_text",
     "renote": "cmd.help.renote",
     "react": "cmd.help.react",
+    "preview": "cmd.help.preview",
     "notif": "cmd.help.notif",
     "list": "cmd.help.list",
     "lang": "cmd.help.lang",
@@ -117,6 +118,19 @@ def _format_note(note):
         r_str = " ".join(f"{k}{v}" for k, v in reactions.items())
         parts.append(("ansigreen", f"  {r_str}\n"))
 
+    files = note.get("files") or []
+    if files:
+        # 📎 [1]image [2]video NSFW [3]audio
+        # English protocol-term labels (not i18n'd). The 'NSFW' suffix
+        # marks per-attachment sensitivity on Misskey, and the note-level
+        # sensitive flag on Mastodon.
+        marker = "  \U0001f4ce"
+        for i, f in enumerate(files, start=1):
+            kind = f.get("type") or "file"
+            nsfw = " NSFW" if f.get("sensitive") else ""
+            marker += f" [{i}]{kind}{nsfw}"
+        parts.append(("ansiblue", marker + "\n"))
+
     return parts
 
 
@@ -164,7 +178,7 @@ def _format_notification(notif):
     return parts
 
 
-NOTE_ID_COMMANDS = ("reply", "reply_text", "renote", "react")
+NOTE_ID_COMMANDS = ("reply", "reply_text", "renote", "react", "preview")
 
 
 LUA_EMOJI_COMPLETE = r"""
@@ -966,6 +980,64 @@ class MisskeyCLI:
                 print(_("status.reacted", reaction=reaction))
         except Exception as e:
             self._error("error.generic", message=str(e))
+
+    def cmd_preview(self, arg):
+        if not self._require_login():
+            return
+        parts = arg.strip().split()
+        if not parts:
+            self._error("usage.preview")
+            return
+        note_id = parts[0]
+        if len(parts) > 1:
+            try:
+                index = int(parts[1])
+            except ValueError:
+                self._error("usage.preview")
+                return
+        else:
+            index = 1
+        if index < 1:
+            self._error("usage.preview")
+            return
+
+        try:
+            note = self.client.show_note(note_id)
+        except Exception as e:
+            self._error("error.fetch_parent_failed", message=str(e))
+            return
+
+        files = (note or {}).get("files") or []
+        images = [f for f in files if f.get("type") == "image"]
+        if not images:
+            self._error("empty.note_images")
+            return
+        if index > len(images):
+            self._error("error.index_out_of_range", index=index, max=len(images))
+            return
+
+        target = images[index - 1]
+        url = target.get("url")
+        try:
+            import shutil
+
+            from . import image as image_mod
+
+            term_width = shutil.get_terminal_size(fallback=(80, 24)).columns
+            output = image_mod.render_image_256_from_url(
+                url, max_width=max(8, term_width - 4)
+            )
+        except Exception as e:
+            self._error("error.preview_failed", message=str(e))
+            return
+
+        sys.stdout.write(output)
+        sys.stdout.flush()
+        alt = target.get("alt")
+        if alt:
+            print_formatted_text(FormattedText([
+                ("ansibrightblack", f"  alt: {alt}"),
+            ]))
 
     def cmd_notif(self, arg):
         if not self._require_login():

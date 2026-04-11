@@ -23,6 +23,7 @@ CATALOG = {
     "cmd.help.reply_text": "Reply from the command line",
     "cmd.help.renote": "Renote a note",
     "cmd.help.react": "React to a note",
+    "cmd.help.preview": "Preview an attached image in the terminal",
     "cmd.help.notif": "List notifications",
     "cmd.help.list": "Show lists / select active list",
     "cmd.help.lang": "Show / change display language",
@@ -39,6 +40,7 @@ CATALOG = {
     "usage.reply_text": "Usage: reply_text <note_id> [visibility] <text>",
     "usage.renote": "Usage: renote <note_id>",
     "usage.react": "Usage: react <note_id> <emoji>",
+    "usage.preview": "Usage: preview <note_id> [image_index]",
     "usage.list_use": "Usage: list use <name_or_id>",
 
     # ----- Status / confirmation -----
@@ -79,6 +81,8 @@ CATALOG = {
     "error.invalid_choice": "Invalid value. Choices: {choices}",
     "error.fetch_parent_failed": "Failed to fetch the parent note: {message}",
     "error.invalid_visibility": "Invalid visibility: {value}",
+    "error.index_out_of_range": "Index out of range: {index} (max: {max})",
+    "error.preview_failed": "Failed to preview image: {message}",
     "error.unknown_command": "Unknown command: {cmd} (type 'help' for the list)",
     "error.unknown_timeline": "Unknown timeline: {tl_type}",
     "error.list_id_required": "list_id is required for tl_type='list'",
@@ -93,6 +97,7 @@ CATALOG = {
     "empty.note": "Empty notes are not posted.",
     "empty.reply": "Empty replies are not sent.",
     "empty.notifications": "No notifications.",
+    "empty.note_images": "This note has no image attachments.",
     "empty.accounts": "No accounts. Run 'login <host>' to log in.",
     "empty.lists": "No lists on this server.",
 

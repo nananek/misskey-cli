@@ -3,3 +3,4 @@ sqlalchemy
 alembic
 prompt_toolkit
 pytest
+Pillow
