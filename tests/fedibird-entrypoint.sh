@@ -38,10 +38,10 @@ bundle exec rails runner '
   user.save!(validate: false)
   user.update_columns(approved: true, confirmed_at: user.confirmed_at)
 
-  app = Doorkeeper::Application.find_by(name: "misskey-cli-e2e")
+  app = Doorkeeper::Application.find_by(name: "nekofedi-e2e")
   unless app
     app = Doorkeeper::Application.create!(
-      name: "misskey-cli-e2e",
+      name: "nekofedi-e2e",
       redirect_uri: "urn:ietf:wg:oauth:2.0:oob",
       scopes: "read write follow",
     )

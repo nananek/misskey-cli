@@ -3,18 +3,19 @@ import contextlib
 import sys
 
 from . import image
-from .cli import MisskeyCLI
+from .cli import NekofediCLI
 from .i18n import init_language
 from .migrate import run_upgrade
 
 
 def _build_parser():
     parser = argparse.ArgumentParser(
-        prog="misskey-cli",
+        prog="nekofedi",
         description=(
-            "Interactive Misskey / Mastodon CLI. Without arguments, starts "
-            "an interactive prompt. With -c / -f / piped stdin, runs commands "
-            "non-interactively (one per line, '#' for comments)."
+            "Interactive fediverse CLI (Misskey, Mastodon, Fedibird, Pleroma, "
+            "GoToSocial, Hometown, Akkoma, Nekonoverse). Without arguments, "
+            "starts an interactive prompt. With -c / -f / piped stdin, runs "
+            "commands non-interactively (one per line, '#' for comments)."
         ),
     )
     parser.add_argument(
@@ -54,10 +55,10 @@ def main():
     run_upgrade()
     init_language()
     # Probe terminal graphics capability once, before prompt_toolkit takes
-    # over stdin/stdout. The result is cached in misskey_cli.image for the
+    # over stdin/stdout. The result is cached in nekofedi.image for the
     # rest of the process lifetime.
     image.detect_graphics_backend()
-    cli = MisskeyCLI()
+    cli = NekofediCLI()
 
     with contextlib.ExitStack() as stack:
         source = _script_source(args, stack)

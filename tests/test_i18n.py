@@ -11,31 +11,31 @@ def i18n_fresh(monkeypatch, tmp_path):
     Each test calling this fixture gets its own SQLite DB so DB-resolution
     tests don't bleed into each other.
     """
-    monkeypatch.setenv("MISSKEY_CLI_CONFIG_DIR", str(tmp_path))
-    monkeypatch.delenv("MISSKEY_CLI_LANG", raising=False)
+    monkeypatch.setenv("NEKOFEDI_CONFIG_DIR", str(tmp_path))
+    monkeypatch.delenv("NEKOFEDI_LANG", raising=False)
     monkeypatch.delenv("LANG", raising=False)
 
     # Reset the relevant modules so the patched env is observed and the
     # config singleton points at our temp dir.
-    import misskey_cli.config
-    import misskey_cli.db
-    import misskey_cli.i18n
-    importlib.reload(misskey_cli.config)
-    importlib.reload(misskey_cli.db)
-    importlib.reload(misskey_cli.i18n)
+    import nekofedi.config
+    import nekofedi.db
+    import nekofedi.i18n
+    importlib.reload(nekofedi.config)
+    importlib.reload(nekofedi.db)
+    importlib.reload(nekofedi.i18n)
 
     # Run migrations so app_config exists in this temp DB.
-    from misskey_cli.migrate import run_upgrade
+    from nekofedi.migrate import run_upgrade
     run_upgrade()
 
-    return misskey_cli.i18n
+    return nekofedi.i18n
 
 
 # ---------- Catalog completeness ----------
 
 
 def test_catalog_keys_match_across_languages():
-    from misskey_cli.i18n import _CATALOGS
+    from nekofedi.i18n import _CATALOGS
 
     en_keys = set(_CATALOGS["en"].keys())
     ja_keys = set(_CATALOGS["ja"].keys())
@@ -49,7 +49,7 @@ def test_catalog_placeholders_match_across_languages():
     """Every {placeholder} in en must also exist in ja and fr for the same key."""
     import re
 
-    from misskey_cli.i18n import _CATALOGS
+    from nekofedi.i18n import _CATALOGS
 
     placeholder_re = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 
@@ -123,7 +123,7 @@ def test_resolve_lang_env_unsupported_falls_back(i18n_fresh, monkeypatch):
 
 def test_resolve_db_beats_lang(i18n_fresh, monkeypatch):
     i18n = i18n_fresh
-    from misskey_cli import config
+    from nekofedi import config
     config.set_app_config("language", "fr")
     monkeypatch.setenv("LANG", "ja_JP.UTF-8")
     assert i18n._resolve_initial_language() == "fr"
@@ -131,16 +131,16 @@ def test_resolve_db_beats_lang(i18n_fresh, monkeypatch):
 
 def test_resolve_env_beats_db_and_lang(i18n_fresh, monkeypatch):
     i18n = i18n_fresh
-    from misskey_cli import config
+    from nekofedi import config
     config.set_app_config("language", "ja")
     monkeypatch.setenv("LANG", "en_US.UTF-8")
-    monkeypatch.setenv("MISSKEY_CLI_LANG", "fr")
+    monkeypatch.setenv("NEKOFEDI_LANG", "fr")
     assert i18n._resolve_initial_language() == "fr"
 
 
 def test_resolve_unsupported_env_is_ignored(i18n_fresh, monkeypatch):
     i18n = i18n_fresh
-    monkeypatch.setenv("MISSKEY_CLI_LANG", "de")
+    monkeypatch.setenv("NEKOFEDI_LANG", "de")
     monkeypatch.setenv("LANG", "ja_JP.UTF-8")
     assert i18n._resolve_initial_language() == "ja"
 
@@ -150,7 +150,7 @@ def test_resolve_unsupported_env_is_ignored(i18n_fresh, monkeypatch):
 
 def test_set_language_persists_and_applies(i18n_fresh):
     i18n = i18n_fresh
-    from misskey_cli import config
+    from nekofedi import config
 
     i18n.set_language("fr")
     assert i18n.get_language() == "fr"

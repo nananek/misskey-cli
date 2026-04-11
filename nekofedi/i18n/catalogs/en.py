@@ -6,7 +6,7 @@ exact same keys (enforced by tests/test_i18n.py).
 
 CATALOG = {
     # ----- App lifecycle -----
-    "app.banner": "Misskey CLI - type 'help' for commands, 'quit' to exit",
+    "app.banner": "nekofedi - type 'help' for commands, 'quit' to exit",
     "app.bye": "bye",
 
     # ----- Command help (description only; the syntax line is implicit) -----

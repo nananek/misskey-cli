@@ -5,7 +5,7 @@ import time
 import pytest
 import requests
 
-from misskey_cli.api import (
+from nekofedi.api import (
     NEKONOVERSE_OOB_REDIRECT,
     NEKONOVERSE_SCOPES,
     NekonoverseClient,
@@ -46,7 +46,7 @@ def _obtain_token(username, password):
     app_resp = requests.post(
         f"{BASE}/api/v1/apps",
         json={
-            "client_name": "misskey-cli-e2e",
+            "client_name": "nekofedi-e2e",
             "redirect_uris": NEKONOVERSE_OOB_REDIRECT,
             "scopes": NEKONOVERSE_SCOPES,
         },

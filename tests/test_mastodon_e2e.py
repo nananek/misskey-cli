@@ -11,7 +11,7 @@ import time
 import pytest
 import requests
 
-from misskey_cli.api import (
+from nekofedi.api import (
     MASTODON_OOB_REDIRECT,
     MASTODON_SCOPES,
     MastodonClient,
@@ -27,7 +27,7 @@ def _create_app():
     resp = requests.post(
         f"{BASE}/api/v1/apps",
         json={
-            "client_name": "misskey-cli-e2e",
+            "client_name": "nekofedi-e2e",
             "redirect_uris": MASTODON_OOB_REDIRECT,
             "scopes": MASTODON_SCOPES,
         },

@@ -4,7 +4,7 @@ import time
 import pytest
 import requests
 
-from misskey_cli.api import MisskeyClient
+from nekofedi.api import MisskeyClient
 
 MISSKEY_HOST = os.environ.get("MISSKEY_HOST", "localhost:61812")
 SETUP_PASSWORD = "test_setup_password"

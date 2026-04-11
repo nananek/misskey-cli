@@ -1,12 +1,12 @@
 import Config
 
-# Plain-HTTP config for the misskey-cli E2E tests. No TLS, no federation, no
+# Plain-HTTP config for the nekofedi E2E tests. No TLS, no federation, no
 # media proxy — just enough to exercise the Pleroma-family code path.
 
 config :pleroma, Pleroma.Web.Endpoint,
   url: [host: "pleroma", scheme: "http", port: 4000],
   http: [ip: {0, 0, 0, 0}, port: 4000],
-  secret_key_base: "test-secret-key-base-not-for-production-use-misskey-cli-e2e-000000000000000",
+  secret_key_base: "test-secret-key-base-not-for-production-use-nekofedi-e2e-000000000000000000",
   signing_salt: "test-signing-salt-00000000"
 
 config :pleroma, Pleroma.Repo,

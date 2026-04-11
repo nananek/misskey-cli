@@ -200,7 +200,7 @@ class MisskeyClient(_BaseClient):
         self.host = host
         session_id = str(uuid.uuid4())
         permissions = ",".join(PERMISSIONS)
-        auth_url = self._url(f"miauth/{session_id}?name=misskey-cli&permission={permissions}")
+        auth_url = self._url(f"miauth/{session_id}?name=nekofedi&permission={permissions}")
 
         self._open_auth_url(auth_url)
 
@@ -364,7 +364,7 @@ class MastodonClient(_BaseClient):
         app_resp = requests.post(
             self._url("api/v1/apps"),
             json={
-                "client_name": "misskey-cli",
+                "client_name": "nekofedi",
                 "redirect_uris": MASTODON_OOB_REDIRECT,
                 "scopes": MASTODON_SCOPES,
             },
@@ -658,7 +658,7 @@ class MastodonClient(_BaseClient):
         return html.unescape(s).strip()
 
 
-# Back-compat alias so `from misskey_cli.api import NekonoverseClient` keeps
+# Back-compat alias so `from nekofedi.api import NekonoverseClient` keeps
 # working (existing tests and any external callers).
 NekonoverseClient = MastodonClient
 

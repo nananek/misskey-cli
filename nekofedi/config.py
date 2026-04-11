@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 
-CONFIG_DIR = Path(os.environ.get("MISSKEY_CLI_CONFIG_DIR", Path.home() / ".config" / "misskey-cli"))
+CONFIG_DIR = Path(os.environ.get("NEKOFEDI_CONFIG_DIR", Path.home() / ".config" / "nekofedi"))
 DB_PATH = CONFIG_DIR / "config.db"
 
 

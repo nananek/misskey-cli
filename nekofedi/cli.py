@@ -39,7 +39,7 @@ QUIT_COMMANDS = ("quit", "exit")
 
 # Mastodon-style aliases → canonical (Misskey-style) command name.
 # Resolved in ``_dispatch_line`` before dispatch and normalised in
-# :class:`MisskeyCompleter` before arg-position checks, so aliases get the
+# :class:`NekofediCompleter` before arg-position checks, so aliases get the
 # same completion behaviour as their canonical counterparts.
 ALIASES = {
     "post": "note",
@@ -241,7 +241,7 @@ def _note_summary(note):
     return note.get("id", ""), username, snippet
 
 
-class MisskeyCompleter(Completer):
+class NekofediCompleter(Completer):
     def __init__(self, get_emoji_names, get_note_meta, get_lists):
         self._get_emoji_names = get_emoji_names
         self._get_note_meta = get_note_meta
@@ -355,7 +355,7 @@ class MisskeyCompleter(Completer):
                 )
 
 
-class MisskeyCLI:
+class NekofediCLI:
     def __init__(self):
         self.username = None
         self.user_id = None
@@ -395,7 +395,7 @@ class MisskeyCLI:
         if self.session is None:
             self.session = PromptSession(
                 history=FileHistory(HISTORY_FILE),
-                completer=MisskeyCompleter(
+                completer=NekofediCompleter(
                     self._get_emoji_names, self._get_note_meta, self._get_lists
                 ),
                 # Run completions off the UI thread so a first-time

@@ -2,7 +2,7 @@
 
 CATALOG = {
     # ----- App lifecycle -----
-    "app.banner": "Misskey CLI - 'help' でコマンド一覧、'quit' で終了",
+    "app.banner": "nekofedi - 'help' でコマンド一覧、'quit' で終了",
     "app.bye": "bye",
 
     # ----- Command help (description only; the syntax line is implicit) -----

@@ -22,7 +22,7 @@ import time
 
 import pytest
 
-from misskey_cli.api import MastodonClient, detect_software
+from nekofedi.api import MastodonClient, detect_software
 
 FEDIBIRD_HOST = os.environ.get("FEDIBIRD_HOST", "web:3000")
 FEDIBIRD_TOKEN = os.environ.get("FEDIBIRD_TOKEN", "")

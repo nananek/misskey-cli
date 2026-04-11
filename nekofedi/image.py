@@ -26,7 +26,7 @@ import sys
 import requests
 
 # Imported here so tests can monkeypatch them as
-# ``misskey_cli.image.termios.tcgetattr`` etc. ``termios`` / ``tty`` are
+# ``nekofedi.image.termios.tcgetattr`` etc. ``termios`` / ``tty`` are
 # Unix-only; on Windows they raise ImportError here, which is fine — the
 # DA1 probe below catches every exception and returns ``"none"``.
 try:

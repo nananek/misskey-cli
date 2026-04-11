@@ -4,7 +4,7 @@ Public API: ``_(key, **kwargs)`` looks up a translated template (formatted
 with the given kwargs) for the active language.
 
 Resolution priority for the initial language (highest first):
-  1. ``MISSKEY_CLI_LANG`` env var
+  1. ``NEKOFEDI_LANG`` env var
   2. value persisted in the ``app_config`` table
   3. ``LANG`` env var, first two letters
   4. ``DEFAULT_LANG`` (``"en"``)
@@ -67,7 +67,7 @@ def _load_stored_language():
 
 
 def _resolve_initial_language():
-    env = os.environ.get("MISSKEY_CLI_LANG")
+    env = os.environ.get("NEKOFEDI_LANG")
     if env and env in SUPPORTED_LANGS:
         return env
 

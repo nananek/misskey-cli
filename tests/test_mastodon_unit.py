@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from prompt_toolkit.document import Document
 
-from misskey_cli.api import (
+from nekofedi.api import (
     MASTODON_SOFTWARE,
     MastodonClient,
     MisskeyClient,
@@ -13,7 +13,7 @@ from misskey_cli.api import (
     detect_software,
     make_client,
 )
-from misskey_cli.cli import ALIASES, COMMANDS, MisskeyCompleter
+from nekofedi.cli import ALIASES, COMMANDS, NekofediCompleter
 
 
 # ---------- MASTODON_SOFTWARE set ----------
@@ -73,7 +73,7 @@ class TestReactDispatch:
     @pytest.mark.parametrize("software", ["pleroma", "akkoma"])
     def test_pleroma_family_uses_put_pleroma_endpoint(self, software):
         c = _client(software)
-        with patch("misskey_cli.api.requests.put") as put:
+        with patch("nekofedi.api.requests.put") as put:
             put.return_value = MagicMock(status_code=200, content=b"{}", json=lambda: {})
             result = c.react("note123", ":foo:")
             put.assert_called_once()
@@ -84,7 +84,7 @@ class TestReactDispatch:
     @pytest.mark.parametrize("software", ["pleroma", "akkoma"])
     def test_pleroma_family_unwraps_unicode_emoji(self, software):
         c = _client(software)
-        with patch("misskey_cli.api.requests.put") as put:
+        with patch("nekofedi.api.requests.put") as put:
             put.return_value = MagicMock(status_code=200, content=b"{}", json=lambda: {})
             c.react("note1", ":⭐:")
             url = put.call_args[0][0]
@@ -96,7 +96,7 @@ class TestReactDispatch:
         """Fedibird ships its own PUT /api/v1/statuses/:id/emoji_reactions/:emoji
         (distinct from the Pleroma extension path, which it does not expose)."""
         c = _client("fedibird")
-        with patch("misskey_cli.api.requests.put") as put:
+        with patch("nekofedi.api.requests.put") as put:
             put.return_value = MagicMock(status_code=200, content=b"{}", json=lambda: {})
             result = c.react("noteFB", ":foo:")
             put.assert_called_once()
@@ -106,7 +106,7 @@ class TestReactDispatch:
 
     def test_fedibird_unwraps_unicode_emoji(self):
         c = _client("fedibird")
-        with patch("misskey_cli.api.requests.put") as put:
+        with patch("nekofedi.api.requests.put") as put:
             put.return_value = MagicMock(status_code=200, content=b"{}", json=lambda: {})
             c.react("noteFB", ":⭐:")
             url = put.call_args[0][0]
@@ -115,7 +115,7 @@ class TestReactDispatch:
 
     def test_nekonoverse_uses_post_react_endpoint(self):
         c = _client("nekonoverse")
-        with patch("misskey_cli.api.requests.post") as post:
+        with patch("nekofedi.api.requests.post") as post:
             post.return_value = MagicMock(status_code=200, content=b"{}", json=lambda: {})
             c.react("noteN", ":foo:")
             url = post.call_args[0][0]
@@ -124,7 +124,7 @@ class TestReactDispatch:
     @pytest.mark.parametrize("software", ["mastodon", "gotosocial", "hometown"])
     def test_mastodon_family_falls_back_to_favourite(self, software):
         c = _client(software)
-        with patch("misskey_cli.api.requests.post") as post:
+        with patch("nekofedi.api.requests.post") as post:
             post.return_value = MagicMock(status_code=200, content=b"{}", json=lambda: {})
             result = c.react("noteM", ":foo:")
             # Exactly one call, to /favourite.
@@ -136,7 +136,7 @@ class TestReactDispatch:
 
     def test_fallback_result_is_none_even_for_unicode_emoji(self):
         c = _client("mastodon")
-        with patch("misskey_cli.api.requests.post") as post:
+        with patch("nekofedi.api.requests.post") as post:
             post.return_value = MagicMock(status_code=200, content=b"{}", json=lambda: {})
             assert c.react("note1", ":⭐:") is None
 
@@ -276,7 +276,7 @@ class TestDetectSoftware:
             {"links": [{"href": "https://example.com/nodeinfo/2.0"}]},
             {"software": {"name": "mastodon", "version": "4.3.0"}},
         )
-        with patch("misskey_cli.api.requests.get", side_effect=[wellknown, node]):
+        with patch("nekofedi.api.requests.get", side_effect=[wellknown, node]):
             assert detect_software("example.com") == "mastodon"
 
     def test_fedibird_via_version_string(self):
@@ -284,7 +284,7 @@ class TestDetectSoftware:
             {"links": [{"href": "https://fb.example/nodeinfo/2.0"}]},
             {"software": {"name": "mastodon", "version": "4.2.1+fedibird-20240420"}},
         )
-        with patch("misskey_cli.api.requests.get", side_effect=[wellknown, node]):
+        with patch("nekofedi.api.requests.get", side_effect=[wellknown, node]):
             assert detect_software("fb.example") == "fedibird"
 
     def test_fedibird_via_repository_url(self):
@@ -298,7 +298,7 @@ class TestDetectSoftware:
                 }
             },
         )
-        with patch("misskey_cli.api.requests.get", side_effect=[wellknown, node]):
+        with patch("nekofedi.api.requests.get", side_effect=[wellknown, node]):
             assert detect_software("fb.example") == "fedibird"
 
     def test_pleroma(self):
@@ -306,7 +306,7 @@ class TestDetectSoftware:
             {"links": [{"href": "https://pleroma.example/nodeinfo/2.1"}]},
             {"software": {"name": "pleroma", "version": "2.6.0"}},
         )
-        with patch("misskey_cli.api.requests.get", side_effect=[wellknown, node]):
+        with patch("nekofedi.api.requests.get", side_effect=[wellknown, node]):
             assert detect_software("pleroma.example") == "pleroma"
 
     def test_misskey(self):
@@ -314,12 +314,12 @@ class TestDetectSoftware:
             {"links": [{"href": "https://m.example/nodeinfo/2.1"}]},
             {"software": {"name": "misskey", "version": "2024.5.0"}},
         )
-        with patch("misskey_cli.api.requests.get", side_effect=[wellknown, node]):
+        with patch("nekofedi.api.requests.get", side_effect=[wellknown, node]):
             assert detect_software("m.example") == "misskey"
 
     def test_network_failure_returns_none(self):
         import requests as _requests  # local alias — test-only
-        with patch("misskey_cli.api.requests.get", side_effect=_requests.ConnectionError):
+        with patch("nekofedi.api.requests.get", side_effect=_requests.ConnectionError):
             assert detect_software("unreachable.example") is None
 
 
@@ -330,7 +330,7 @@ class TestTimeline:
     @pytest.mark.parametrize("software", ["mastodon", "pleroma", "akkoma", "nekonoverse"])
     def test_local_uses_local_true(self, software):
         c = _client(software)
-        with patch("misskey_cli.api.requests.get") as get:
+        with patch("nekofedi.api.requests.get") as get:
             get.return_value = MagicMock(status_code=200, content=b"[]", json=lambda: [])
             c.timeline("local", limit=5)
             url = get.call_args[0][0]
@@ -343,7 +343,7 @@ class TestTimeline:
         """Fedibird reinterprets ``local=true`` as "local-only visibility"
         and uses ``remote=false`` to mean "public timeline without remote posts"."""
         c = _client("fedibird")
-        with patch("misskey_cli.api.requests.get") as get:
+        with patch("nekofedi.api.requests.get") as get:
             get.return_value = MagicMock(status_code=200, content=b"[]", json=lambda: [])
             c.timeline("local", limit=5)
             params = get.call_args.kwargs.get("params") or {}
@@ -352,7 +352,7 @@ class TestTimeline:
 
     def test_fedibird_hybrid_uses_remote_false(self):
         c = _client("fedibird")
-        with patch("misskey_cli.api.requests.get") as get:
+        with patch("nekofedi.api.requests.get") as get:
             get.return_value = MagicMock(status_code=200, content=b"[]", json=lambda: [])
             c.timeline("hybrid", limit=5)
             params = get.call_args.kwargs.get("params") or {}
@@ -371,7 +371,7 @@ class TestMakeClient:
         assert isinstance(c, MastodonClient)
         assert c.software == software
 
-    def test_misskey_routes_to_misskey_client(self):
+    def test_misskey_routes_to_nekofedient(self):
         c = make_client(host="x", token="t", software="misskey", scheme="http")
         assert isinstance(c, MisskeyClient)
 
@@ -382,7 +382,7 @@ class TestMakeClient:
 class TestMastodonLists:
     def test_normalizes_title_to_name(self):
         c = _client("mastodon")
-        with patch("misskey_cli.api.requests.get") as get:
+        with patch("nekofedi.api.requests.get") as get:
             get.return_value = MagicMock(
                 status_code=200,
                 content=b"[]",
@@ -402,7 +402,7 @@ class TestMastodonLists:
 
     def test_skips_entries_without_id(self):
         c = _client("mastodon")
-        with patch("misskey_cli.api.requests.get") as get:
+        with patch("nekofedi.api.requests.get") as get:
             get.return_value = MagicMock(
                 status_code=200,
                 content=b"[]",
@@ -415,7 +415,7 @@ class TestMastodonLists:
 
     def test_empty_response(self):
         c = _client("fedibird")
-        with patch("misskey_cli.api.requests.get") as get:
+        with patch("nekofedi.api.requests.get") as get:
             get.return_value = MagicMock(
                 status_code=200, content=b"[]", json=lambda: []
             )
@@ -425,7 +425,7 @@ class TestMastodonLists:
 class TestMisskeyLists:
     def test_returns_id_name_pairs(self):
         c = MisskeyClient(host="m.example", token="t", scheme="http")
-        with patch("misskey_cli.api.requests.post") as post:
+        with patch("nekofedi.api.requests.post") as post:
             post.return_value = MagicMock(
                 status_code=200,
                 content=b"[]",
@@ -444,7 +444,7 @@ class TestMisskeyLists:
 
     def test_skips_entries_without_id(self):
         c = MisskeyClient(host="m.example", token="t", scheme="http")
-        with patch("misskey_cli.api.requests.post") as post:
+        with patch("nekofedi.api.requests.post") as post:
             post.return_value = MagicMock(
                 status_code=200,
                 content=b"[]",
@@ -462,7 +462,7 @@ class TestMisskeyLists:
 class TestListTimeline:
     def test_mastodon_list_timeline_hits_list_endpoint(self):
         c = _client("mastodon")
-        with patch("misskey_cli.api.requests.get") as get:
+        with patch("nekofedi.api.requests.get") as get:
             get.return_value = MagicMock(
                 status_code=200, content=b"[]", json=lambda: []
             )
@@ -483,7 +483,7 @@ class TestListTimeline:
     def test_fedibird_list_timeline_ignores_remote_override(self):
         """Fedibird's local/remote rewrite only applies to public TL, not list."""
         c = _client("fedibird")
-        with patch("misskey_cli.api.requests.get") as get:
+        with patch("nekofedi.api.requests.get") as get:
             get.return_value = MagicMock(
                 status_code=200, content=b"[]", json=lambda: []
             )
@@ -496,7 +496,7 @@ class TestListTimeline:
 
     def test_misskey_list_timeline_posts_user_list_endpoint(self):
         c = MisskeyClient(host="m.example", token="t", scheme="http")
-        with patch("misskey_cli.api.requests.post") as post:
+        with patch("nekofedi.api.requests.post") as post:
             post.return_value = MagicMock(
                 status_code=200, content=b"[]", json=lambda: []
             )
@@ -522,17 +522,17 @@ class TestListTimeline:
 
 
 def _build_stub_cli(**stub_attrs):
-    """Instantiate MisskeyCLI with the client and DB side-effects stubbed.
+    """Instantiate NekofediCLI with the client and DB side-effects stubbed.
 
     Extra keyword arguments become ``stub.<name>.return_value = value``
     assignments on the mock client, so callers can override the default
     ``lists`` / ``timeline`` / ``create_note`` responses as needed.
     Returns ``(cli, stub)``.
     """
-    from misskey_cli.cli import MisskeyCLI
+    from nekofedi.cli import NekofediCLI
 
-    with patch("misskey_cli.cli.make_client") as mc, \
-         patch("misskey_cli.config.CONFIG_DIR") as cd:
+    with patch("nekofedi.cli.make_client") as mc, \
+         patch("nekofedi.config.CONFIG_DIR") as cd:
         cd.mkdir = MagicMock()
         stub = MagicMock()
         stub.logged_in = True
@@ -548,12 +548,12 @@ def _build_stub_cli(**stub_attrs):
         for attr, value in stub_attrs.items():
             getattr(stub, attr).return_value = value
         mc.return_value = stub
-        cli = MisskeyCLI()
+        cli = NekofediCLI()
         return cli, stub
 
 
 def _make_completer(*, emoji=None, note_meta=None, lists=None):
-    """Build a :class:`MisskeyCompleter` with injected callbacks.
+    """Build a :class:`NekofediCompleter` with injected callbacks.
 
     Defaults:
       - ``emoji``: empty list
@@ -565,7 +565,7 @@ def _make_completer(*, emoji=None, note_meta=None, lists=None):
             {"id": "abc", "name": "friends"},
             {"id": "def", "name": "family"},
         ]
-    return MisskeyCompleter(
+    return NekofediCompleter(
         get_emoji_names=lambda: emoji or [],
         get_note_meta=lambda: note_meta or [],
         get_lists=lambda: lists,
@@ -592,25 +592,25 @@ class TestListCompleterAndCmds:
     """
 
     def test_tl_list_offers_list_names(self):
-        with patch("misskey_cli.config.get_active_list_id", return_value=None):
+        with patch("nekofedi.config.get_active_list_id", return_value=None):
             results = _complete_text(_make_completer(), "tl list ")
         assert "friends" in results
         assert "family" in results
 
     def test_tl_list_prefix_filter(self):
-        with patch("misskey_cli.config.get_active_list_id", return_value=None):
+        with patch("nekofedi.config.get_active_list_id", return_value=None):
             results = _complete_text(_make_completer(), "tl list fr")
         assert results == ["friends"]
 
     def test_default_timeline_list_offers_list_names(self):
-        with patch("misskey_cli.config.get_active_list_id", return_value=None):
+        with patch("nekofedi.config.get_active_list_id", return_value=None):
             results = _complete_text(_make_completer(), "default_timeline list ")
         assert "friends" in results
         assert "family" in results
 
     def test_list_use_still_works(self):
         """Regression: the new helper shouldn't break the original `list use` path."""
-        with patch("misskey_cli.config.get_active_list_id", return_value=None):
+        with patch("nekofedi.config.get_active_list_id", return_value=None):
             results = _complete_text(_make_completer(), "list use fr")
         assert results == ["friends"]
 
@@ -629,13 +629,13 @@ class TestListCompleterAndCmds:
     def test_cmd_tl_list_bare_limit_uses_active(self):
         """`tl list 5` (bare number) must use the active list, not treat 5 as a target."""
         cli, stub = _build_stub_cli()
-        with patch("misskey_cli.config.get_active_list_id", return_value="abc"):
+        with patch("nekofedi.config.get_active_list_id", return_value="abc"):
             cli.cmd_tl("list 5")
         stub.timeline.assert_called_once_with("list", 5, list_id="abc")
 
     def test_cmd_tl_list_no_arg_uses_active(self):
         cli, stub = _build_stub_cli()
-        with patch("misskey_cli.config.get_active_list_id", return_value="def"):
+        with patch("nekofedi.config.get_active_list_id", return_value="def"):
             cli.cmd_tl("list")
         stub.timeline.assert_called_once_with("list", 10, list_id="def")
 
@@ -646,24 +646,24 @@ class TestListCompleterAndCmds:
 
     def test_cmd_tl_list_no_active_no_arg_errors(self):
         cli, stub = _build_stub_cli()
-        with patch("misskey_cli.config.get_active_list_id", return_value=None):
+        with patch("nekofedi.config.get_active_list_id", return_value=None):
             cli.cmd_tl("list")
         stub.timeline.assert_not_called()
 
     def test_cmd_default_timeline_list_with_target(self):
         cli, _ = _build_stub_cli()
-        with patch("misskey_cli.config.set_active_list_id") as set_act, \
-             patch("misskey_cli.config.set_default_timeline") as set_def, \
-             patch("misskey_cli.config.get_active_list_id", return_value=None):
+        with patch("nekofedi.config.set_active_list_id") as set_act, \
+             patch("nekofedi.config.set_default_timeline") as set_def, \
+             patch("nekofedi.config.get_active_list_id", return_value=None):
             cli.cmd_default_timeline("list friends")
         set_act.assert_called_once_with("abc")
         set_def.assert_called_once_with("list")
 
     def test_cmd_default_timeline_list_without_target_and_no_active_errors(self):
         cli, _ = _build_stub_cli()
-        with patch("misskey_cli.config.set_active_list_id") as set_act, \
-             patch("misskey_cli.config.set_default_timeline") as set_def, \
-             patch("misskey_cli.config.get_active_list_id", return_value=None):
+        with patch("nekofedi.config.set_active_list_id") as set_act, \
+             patch("nekofedi.config.set_default_timeline") as set_def, \
+             patch("nekofedi.config.get_active_list_id", return_value=None):
             cli.cmd_default_timeline("list")
         set_act.assert_not_called()
         set_def.assert_not_called()
@@ -679,7 +679,7 @@ class TestListCompleterAndCmds:
 
 
 class TestRunScript:
-    """Covers ``MisskeyCLI.run_script`` — the non-interactive entry point
+    """Covers ``NekofediCLI.run_script`` — the non-interactive entry point
     used by ``-c`` / ``-f`` / piped stdin.
     """
 
@@ -888,38 +888,38 @@ class TestAliases:
 
 class TestRgbTo256:
     def test_pure_black(self):
-        from misskey_cli.image import rgb_to_256
+        from nekofedi.image import rgb_to_256
         assert rgb_to_256(0, 0, 0) == 16
 
     def test_pure_white(self):
-        from misskey_cli.image import rgb_to_256
+        from nekofedi.image import rgb_to_256
         assert rgb_to_256(255, 255, 255) == 231
 
     def test_pure_red(self):
-        from misskey_cli.image import rgb_to_256
+        from nekofedi.image import rgb_to_256
         # 16 + 36*5 + 6*0 + 0 = 196
         assert rgb_to_256(255, 0, 0) == 196
 
     def test_pure_green(self):
-        from misskey_cli.image import rgb_to_256
+        from nekofedi.image import rgb_to_256
         # 16 + 0 + 6*5 + 0 = 46
         assert rgb_to_256(0, 255, 0) == 46
 
     def test_pure_blue(self):
-        from misskey_cli.image import rgb_to_256
+        from nekofedi.image import rgb_to_256
         # 16 + 0 + 0 + 5 = 21
         assert rgb_to_256(0, 0, 255) == 21
 
     def test_very_dark_gray_clamps_to_16(self):
-        from misskey_cli.image import rgb_to_256
+        from nekofedi.image import rgb_to_256
         assert rgb_to_256(4, 4, 4) == 16
 
     def test_very_bright_gray_clamps_to_231(self):
-        from misskey_cli.image import rgb_to_256
+        from nekofedi.image import rgb_to_256
         assert rgb_to_256(250, 250, 250) == 231
 
     def test_midrange_gray_is_in_grayscale_ramp(self):
-        from misskey_cli.image import rgb_to_256
+        from nekofedi.image import rgb_to_256
         # Grayscale ramp is 232..255.
         idx = rgb_to_256(128, 128, 128)
         assert 232 <= idx <= 255
@@ -936,7 +936,7 @@ class TestRenderImage256:
         return buf.getvalue()
 
     def test_tiny_image_produces_escape_codes_and_half_block(self):
-        from misskey_cli.image import render_image_256
+        from nekofedi.image import render_image_256
         out = render_image_256(self._png_bytes((2, 2), (255, 0, 0)), max_width=80)
         assert "\u2580" in out
         assert "\x1b[38;5;196m" in out  # red fg
@@ -944,13 +944,13 @@ class TestRenderImage256:
         assert "\x1b[0m\n" in out
 
     def test_odd_height_pads_bottom(self):
-        from misskey_cli.image import render_image_256
+        from nekofedi.image import render_image_256
         out = render_image_256(self._png_bytes((2, 3), (255, 255, 255)), max_width=80)
         # 3 rows → ceil(3/2) = 2 output lines.
         assert out.count("\n") == 2
 
     def test_resize_caps_width(self):
-        from misskey_cli.image import render_image_256
+        from nekofedi.image import render_image_256
         out = render_image_256(self._png_bytes((400, 10), (0, 0, 0)), max_width=20)
         for line in out.rstrip("\n").split("\n"):
             assert line.count("\u2580") <= 20
@@ -1012,7 +1012,7 @@ class TestMisskeyNormalizeFiles:
 class TestMisskeyInjectsFiles:
     def test_show_note_injects_files(self):
         c = MisskeyClient(host="m.example", token="t", scheme="http")
-        with patch("misskey_cli.api.requests.post") as post:
+        with patch("nekofedi.api.requests.post") as post:
             post.return_value = MagicMock(
                 status_code=200,
                 content=b"{}",
@@ -1035,7 +1035,7 @@ class TestMisskeyInjectsFiles:
 
     def test_show_note_none_is_safe(self):
         c = MisskeyClient(host="m.example", token="t", scheme="http")
-        with patch("misskey_cli.api.requests.post") as post:
+        with patch("nekofedi.api.requests.post") as post:
             post.return_value = MagicMock(
                 status_code=200, content=b"", json=lambda: None
             )
@@ -1043,7 +1043,7 @@ class TestMisskeyInjectsFiles:
 
     def test_timeline_injects_files_on_each_note(self):
         c = MisskeyClient(host="m.example", token="t", scheme="http")
-        with patch("misskey_cli.api.requests.post") as post:
+        with patch("nekofedi.api.requests.post") as post:
             post.return_value = MagicMock(
                 status_code=200,
                 content=b"[]",
@@ -1058,7 +1058,7 @@ class TestMisskeyInjectsFiles:
 
     def test_notifications_injects_files_on_embedded_note(self):
         c = MisskeyClient(host="m.example", token="t", scheme="http")
-        with patch("misskey_cli.api.requests.post") as post:
+        with patch("nekofedi.api.requests.post") as post:
             post.return_value = MagicMock(
                 status_code=200,
                 content=b"[]",
@@ -1078,7 +1078,7 @@ class TestMisskeyInjectsFiles:
 
     def test_show_note_normalizes_inner_renote_files(self):
         c = MisskeyClient(host="m.example", token="t", scheme="http")
-        with patch("misskey_cli.api.requests.post") as post:
+        with patch("nekofedi.api.requests.post") as post:
             post.return_value = MagicMock(
                 status_code=200,
                 content=b"{}",
@@ -1192,19 +1192,19 @@ class TestFormatNoteAttachments:
         return note
 
     def test_no_files_no_marker_line(self):
-        from misskey_cli.cli import _format_note
+        from nekofedi.cli import _format_note
         joined = "".join(t for _, t in _format_note(self._base_note()))
         assert "\U0001f4ce" not in joined
 
     def test_empty_files_no_marker_line(self):
-        from misskey_cli.cli import _format_note
+        from nekofedi.cli import _format_note
         joined = "".join(
             t for _, t in _format_note(self._base_note(files=[]))
         )
         assert "\U0001f4ce" not in joined
 
     def test_files_produce_marker_line(self):
-        from misskey_cli.cli import _format_note
+        from nekofedi.cli import _format_note
         note = self._base_note(files=[
             {"url": "u", "type": "image", "sensitive": False},
             {"url": "u2", "type": "video", "sensitive": True},
@@ -1215,7 +1215,7 @@ class TestFormatNoteAttachments:
         assert "[2]video NSFW" in joined
 
     def test_files_line_uses_ansiblue_style(self):
-        from misskey_cli.cli import _format_note
+        from nekofedi.cli import _format_note
         note = self._base_note(files=[{"url": "u", "type": "image"}])
         parts = _format_note(note)
         # Find the attachment line — the one containing the clip marker.
@@ -1258,7 +1258,7 @@ class TestCmdPreview:
         cli.cmd_preview("n1 xyz")
         assert capsys.readouterr().err
         # Render should not have been attempted.
-        with patch("misskey_cli.image.render_image_from_url_auto") as render:
+        with patch("nekofedi.image.render_image_from_url_auto") as render:
             render.assert_not_called()
 
     def test_zero_index_errors(self, capsys):
@@ -1289,10 +1289,10 @@ class TestCmdPreview:
             ],
         }
         with patch(
-            "misskey_cli.image.render_image_from_url_auto",
+            "nekofedi.image.render_image_from_url_auto",
             return_value="\x1b[38;5;196m\u2580\x1b[0m\n",
         ) as render, patch(
-            "misskey_cli.config.get_image_backend", return_value="auto"
+            "nekofedi.config.get_image_backend", return_value="auto"
         ):
             cli.cmd_preview("n1")
             render.assert_called_once()
@@ -1309,10 +1309,10 @@ class TestCmdPreview:
             ],
         }
         with patch(
-            "misskey_cli.image.render_image_from_url_auto",
+            "nekofedi.image.render_image_from_url_auto",
             return_value="",
         ), patch(
-            "misskey_cli.config.get_image_backend", return_value="auto"
+            "nekofedi.config.get_image_backend", return_value="auto"
         ):
             cli.cmd_preview("n1")
         out = capsys.readouterr().out
@@ -1331,10 +1331,10 @@ class TestCmdPreview:
             "files": [{"url": "https://x/a.png", "type": "image"}],
         }
         with patch(
-            "misskey_cli.image.render_image_from_url_auto",
+            "nekofedi.image.render_image_from_url_auto",
             side_effect=RuntimeError("decode fail"),
         ), patch(
-            "misskey_cli.config.get_image_backend", return_value="auto"
+            "nekofedi.config.get_image_backend", return_value="auto"
         ):
             cli.cmd_preview("n1")
         assert "decode fail" in capsys.readouterr().err
@@ -1352,10 +1352,10 @@ class TestCmdPreview:
             ],
         }
         with patch(
-            "misskey_cli.image.render_image_from_url_auto",
+            "nekofedi.image.render_image_from_url_auto",
             return_value="",
         ) as render, patch(
-            "misskey_cli.config.get_image_backend", return_value="auto"
+            "nekofedi.config.get_image_backend", return_value="auto"
         ):
             cli.cmd_preview("n1 2")
             render.assert_called_once()
@@ -1370,10 +1370,10 @@ class TestCmdPreview:
             "files": [{"url": "https://x/a.png", "type": "image"}],
         }
         with patch(
-            "misskey_cli.image.render_image_from_url_auto",
+            "nekofedi.image.render_image_from_url_auto",
             return_value="",
         ) as render, patch(
-            "misskey_cli.config.get_image_backend",
+            "nekofedi.config.get_image_backend",
             return_value="sixel",
         ):
             cli.cmd_preview("n1")
@@ -1386,10 +1386,10 @@ class TestCmdPreview:
             "files": [{"url": "https://x/a.png", "type": "image"}],
         }
         with patch(
-            "misskey_cli.image.render_image_from_url_auto",
+            "nekofedi.image.render_image_from_url_auto",
             return_value="",
         ) as render, patch(
-            "misskey_cli.config.get_image_backend",
+            "nekofedi.config.get_image_backend",
             return_value="auto",
         ):
             cli.cmd_preview("n1")
@@ -1436,41 +1436,41 @@ def _stub_tty(stdin_is_tty=True, stdout_is_tty=True, read_response=""):
 
 
 class TestDetectGraphicsBackend:
-    """Tests for :func:`misskey_cli.image.detect_graphics_backend`."""
+    """Tests for :func:`nekofedi.image.detect_graphics_backend`."""
 
     def setup_method(self):
-        from misskey_cli import image
+        from nekofedi import image
 
         image._reset_backend_cache_for_tests()
 
     def teardown_method(self):
-        from misskey_cli import image
+        from nekofedi import image
 
         image._reset_backend_cache_for_tests()
 
     def test_kitty_env_wins(self, monkeypatch):
-        from misskey_cli import image
+        from nekofedi import image
 
         monkeypatch.setenv("KITTY_WINDOW_ID", "1")
         monkeypatch.delenv("TERM_PROGRAM", raising=False)
         assert image.detect_graphics_backend() == "kitty"
 
     def test_ghostty_env(self, monkeypatch):
-        from misskey_cli import image
+        from nekofedi import image
 
         monkeypatch.delenv("KITTY_WINDOW_ID", raising=False)
         monkeypatch.setenv("TERM_PROGRAM", "ghostty")
         assert image.detect_graphics_backend() == "kitty"
 
     def test_wezterm_env(self, monkeypatch):
-        from misskey_cli import image
+        from nekofedi import image
 
         monkeypatch.delenv("KITTY_WINDOW_ID", raising=False)
         monkeypatch.setenv("TERM_PROGRAM", "WezTerm")
         assert image.detect_graphics_backend() == "kitty"
 
     def test_no_env_no_tty_returns_none(self, monkeypatch):
-        from misskey_cli import image
+        from nekofedi import image
 
         monkeypatch.delenv("KITTY_WINDOW_ID", raising=False)
         monkeypatch.delenv("TERM_PROGRAM", raising=False)
@@ -1481,7 +1481,7 @@ class TestDetectGraphicsBackend:
         fake_stdout.write.assert_not_called()
 
     def test_tmux_bails_without_probe(self, monkeypatch):
-        from misskey_cli import image
+        from nekofedi import image
 
         monkeypatch.delenv("KITTY_WINDOW_ID", raising=False)
         monkeypatch.delenv("TERM_PROGRAM", raising=False)
@@ -1493,7 +1493,7 @@ class TestDetectGraphicsBackend:
         fake_stdout.write.assert_not_called()
 
     def test_screen_bails_without_probe(self, monkeypatch):
-        from misskey_cli import image
+        from nekofedi import image
 
         monkeypatch.delenv("KITTY_WINDOW_ID", raising=False)
         monkeypatch.delenv("TERM_PROGRAM", raising=False)
@@ -1505,7 +1505,7 @@ class TestDetectGraphicsBackend:
         fake_stdout.write.assert_not_called()
 
     def test_probe_response_with_sixel_token(self, monkeypatch):
-        from misskey_cli import image
+        from nekofedi import image
 
         monkeypatch.delenv("KITTY_WINDOW_ID", raising=False)
         monkeypatch.delenv("TERM_PROGRAM", raising=False)
@@ -1516,20 +1516,20 @@ class TestDetectGraphicsBackend:
         monkeypatch.setattr("sys.stdin", fake_stdin)
         monkeypatch.setattr("sys.stdout", fake_stdout)
         monkeypatch.setattr(
-            "misskey_cli.image.termios.tcgetattr", lambda fd: "saved"
+            "nekofedi.image.termios.tcgetattr", lambda fd: "saved"
         )
         monkeypatch.setattr(
-            "misskey_cli.image.termios.tcsetattr", lambda fd, when, attrs: None
+            "nekofedi.image.termios.tcsetattr", lambda fd, when, attrs: None
         )
-        monkeypatch.setattr("misskey_cli.image.tty.setcbreak", lambda fd: None)
+        monkeypatch.setattr("nekofedi.image.tty.setcbreak", lambda fd: None)
         monkeypatch.setattr(
-            "misskey_cli.image.select.select",
+            "nekofedi.image.select.select",
             lambda r, w, x, t: ([fake_stdin], [], []),
         )
         assert image.detect_graphics_backend() == "sixel"
 
     def test_probe_response_without_sixel_token(self, monkeypatch):
-        from misskey_cli import image
+        from nekofedi import image
 
         monkeypatch.delenv("KITTY_WINDOW_ID", raising=False)
         monkeypatch.delenv("TERM_PROGRAM", raising=False)
@@ -1540,21 +1540,21 @@ class TestDetectGraphicsBackend:
         monkeypatch.setattr("sys.stdin", fake_stdin)
         monkeypatch.setattr("sys.stdout", fake_stdout)
         monkeypatch.setattr(
-            "misskey_cli.image.termios.tcgetattr", lambda fd: "saved"
+            "nekofedi.image.termios.tcgetattr", lambda fd: "saved"
         )
         monkeypatch.setattr(
-            "misskey_cli.image.termios.tcsetattr", lambda fd, when, attrs: None
+            "nekofedi.image.termios.tcsetattr", lambda fd, when, attrs: None
         )
-        monkeypatch.setattr("misskey_cli.image.tty.setcbreak", lambda fd: None)
+        monkeypatch.setattr("nekofedi.image.tty.setcbreak", lambda fd: None)
         monkeypatch.setattr(
-            "misskey_cli.image.select.select",
+            "nekofedi.image.select.select",
             lambda r, w, x, t: ([fake_stdin], [], []),
         )
         assert image.detect_graphics_backend() == "none"
 
     def test_probe_token_split_not_substring(self, monkeypatch):
         """``14``/``40``/``42`` must NOT count as sixel (no literal ``4`` token)."""
-        from misskey_cli import image
+        from nekofedi import image
 
         monkeypatch.delenv("KITTY_WINDOW_ID", raising=False)
         monkeypatch.delenv("TERM_PROGRAM", raising=False)
@@ -1565,20 +1565,20 @@ class TestDetectGraphicsBackend:
         monkeypatch.setattr("sys.stdin", fake_stdin)
         monkeypatch.setattr("sys.stdout", fake_stdout)
         monkeypatch.setattr(
-            "misskey_cli.image.termios.tcgetattr", lambda fd: "saved"
+            "nekofedi.image.termios.tcgetattr", lambda fd: "saved"
         )
         monkeypatch.setattr(
-            "misskey_cli.image.termios.tcsetattr", lambda fd, when, attrs: None
+            "nekofedi.image.termios.tcsetattr", lambda fd, when, attrs: None
         )
-        monkeypatch.setattr("misskey_cli.image.tty.setcbreak", lambda fd: None)
+        monkeypatch.setattr("nekofedi.image.tty.setcbreak", lambda fd: None)
         monkeypatch.setattr(
-            "misskey_cli.image.select.select",
+            "nekofedi.image.select.select",
             lambda r, w, x, t: ([fake_stdin], [], []),
         )
         assert image.detect_graphics_backend() == "none"
 
     def test_probe_timeout(self, monkeypatch):
-        from misskey_cli import image
+        from nekofedi import image
 
         monkeypatch.delenv("KITTY_WINDOW_ID", raising=False)
         monkeypatch.delenv("TERM_PROGRAM", raising=False)
@@ -1587,20 +1587,20 @@ class TestDetectGraphicsBackend:
         monkeypatch.setattr("sys.stdin", fake_stdin)
         monkeypatch.setattr("sys.stdout", fake_stdout)
         monkeypatch.setattr(
-            "misskey_cli.image.termios.tcgetattr", lambda fd: "saved"
+            "nekofedi.image.termios.tcgetattr", lambda fd: "saved"
         )
         monkeypatch.setattr(
-            "misskey_cli.image.termios.tcsetattr", lambda fd, when, attrs: None
+            "nekofedi.image.termios.tcsetattr", lambda fd, when, attrs: None
         )
-        monkeypatch.setattr("misskey_cli.image.tty.setcbreak", lambda fd: None)
+        monkeypatch.setattr("nekofedi.image.tty.setcbreak", lambda fd: None)
         monkeypatch.setattr(
-            "misskey_cli.image.select.select",
+            "nekofedi.image.select.select",
             lambda r, w, x, t: ([], [], []),  # timeout
         )
         assert image.detect_graphics_backend() == "none"
 
     def test_probe_defensive_exception(self, monkeypatch):
-        from misskey_cli import image
+        from nekofedi import image
 
         monkeypatch.delenv("KITTY_WINDOW_ID", raising=False)
         monkeypatch.delenv("TERM_PROGRAM", raising=False)
@@ -1612,11 +1612,11 @@ class TestDetectGraphicsBackend:
         def boom(fd):
             raise OSError("not a tty")
 
-        monkeypatch.setattr("misskey_cli.image.termios.tcgetattr", boom)
+        monkeypatch.setattr("nekofedi.image.termios.tcgetattr", boom)
         assert image.detect_graphics_backend() == "none"
 
     def test_cached_result_reused(self, monkeypatch):
-        from misskey_cli import image
+        from nekofedi import image
 
         monkeypatch.setenv("KITTY_WINDOW_ID", "1")
         monkeypatch.delenv("TERM_PROGRAM", raising=False)
@@ -1660,7 +1660,7 @@ def _larger_png():
 
 class TestRenderImageSixel:
     def test_outputs_sixel_string(self):
-        from misskey_cli import image
+        from nekofedi import image
 
         out = image.render_image_sixel(_tiny_red_png(), max_pixel_width=64)
         assert isinstance(out, str)
@@ -1668,7 +1668,7 @@ class TestRenderImageSixel:
         assert out.endswith("\x1b\\")  # ST
 
     def test_passes_max_pixel_width(self):
-        from misskey_cli import image
+        from nekofedi import image
 
         with patch("sixel.converter.SixelConverter") as SC:
             SC.return_value.getvalue.return_value = "stub"
@@ -1678,14 +1678,14 @@ class TestRenderImageSixel:
 
 class TestRenderImageKitty:
     def test_small_image_has_kitty_header(self):
-        from misskey_cli import image
+        from nekofedi import image
 
         out = image.render_image_kitty(_tiny_red_png(), max_cols=20)
         assert out.startswith("\x1b_Ga=T,f=100,c=20,m=")
         assert out.endswith("\x1b\\\n")
 
     def test_small_image_single_chunk_is_m0(self):
-        from misskey_cli import image
+        from nekofedi import image
 
         out = image.render_image_kitty(_tiny_red_png(), max_cols=20)
         # Tiny PNG fits in a single <4096 byte base64 chunk.
@@ -1693,7 +1693,7 @@ class TestRenderImageKitty:
         assert ",m=0;" in out
 
     def test_large_image_is_chunked(self):
-        from misskey_cli import image
+        from nekofedi import image
 
         png = _larger_png()
         out = image.render_image_kitty(png, max_cols=40)
@@ -1711,7 +1711,7 @@ class TestRenderImageKitty:
         import base64 as b64
         import re
 
-        from misskey_cli import image
+        from nekofedi import image
 
         png_in = _larger_png()
         out = image.render_image_kitty(png_in, max_cols=40)
@@ -1727,21 +1727,21 @@ class TestRenderImageKitty:
 
 class TestRenderImageAutoDispatch:
     def setup_method(self):
-        from misskey_cli import image
+        from nekofedi import image
 
         image._reset_backend_cache_for_tests()
 
     def teardown_method(self):
-        from misskey_cli import image
+        from nekofedi import image
 
         image._reset_backend_cache_for_tests()
 
     def test_explicit_256(self):
-        from misskey_cli import image
+        from nekofedi import image
 
-        with patch("misskey_cli.image.render_image_256") as r256, \
-             patch("misskey_cli.image.render_image_sixel") as rsx, \
-             patch("misskey_cli.image.render_image_kitty") as rkt:
+        with patch("nekofedi.image.render_image_256") as r256, \
+             patch("nekofedi.image.render_image_sixel") as rsx, \
+             patch("nekofedi.image.render_image_kitty") as rkt:
             r256.return_value = "256"
             image.render_image_auto(b"x", max_cols=80, backend="256")
         r256.assert_called_once()
@@ -1749,11 +1749,11 @@ class TestRenderImageAutoDispatch:
         rkt.assert_not_called()
 
     def test_explicit_sixel(self):
-        from misskey_cli import image
+        from nekofedi import image
 
-        with patch("misskey_cli.image.render_image_256") as r256, \
-             patch("misskey_cli.image.render_image_sixel") as rsx, \
-             patch("misskey_cli.image.render_image_kitty") as rkt:
+        with patch("nekofedi.image.render_image_256") as r256, \
+             patch("nekofedi.image.render_image_sixel") as rsx, \
+             patch("nekofedi.image.render_image_kitty") as rkt:
             rsx.return_value = "sixel"
             image.render_image_auto(b"x", max_cols=80, backend="sixel")
         rsx.assert_called_once()
@@ -1761,11 +1761,11 @@ class TestRenderImageAutoDispatch:
         rkt.assert_not_called()
 
     def test_explicit_kitty(self):
-        from misskey_cli import image
+        from nekofedi import image
 
-        with patch("misskey_cli.image.render_image_256") as r256, \
-             patch("misskey_cli.image.render_image_sixel") as rsx, \
-             patch("misskey_cli.image.render_image_kitty") as rkt:
+        with patch("nekofedi.image.render_image_256") as r256, \
+             patch("nekofedi.image.render_image_sixel") as rsx, \
+             patch("nekofedi.image.render_image_kitty") as rkt:
             rkt.return_value = "kitty"
             image.render_image_auto(b"x", max_cols=80, backend="kitty")
         rkt.assert_called_once()
@@ -1773,13 +1773,13 @@ class TestRenderImageAutoDispatch:
         rsx.assert_not_called()
 
     def test_auto_picks_kitty_when_detected(self):
-        from misskey_cli import image
+        from nekofedi import image
 
         with patch(
-            "misskey_cli.image.detect_graphics_backend", return_value="kitty"
-        ), patch("misskey_cli.image.render_image_256") as r256, \
-             patch("misskey_cli.image.render_image_sixel") as rsx, \
-             patch("misskey_cli.image.render_image_kitty") as rkt:
+            "nekofedi.image.detect_graphics_backend", return_value="kitty"
+        ), patch("nekofedi.image.render_image_256") as r256, \
+             patch("nekofedi.image.render_image_sixel") as rsx, \
+             patch("nekofedi.image.render_image_kitty") as rkt:
             rkt.return_value = "kitty"
             image.render_image_auto(b"x", max_cols=80, backend="auto")
         rkt.assert_called_once()
@@ -1787,13 +1787,13 @@ class TestRenderImageAutoDispatch:
         rsx.assert_not_called()
 
     def test_auto_picks_sixel_when_detected(self):
-        from misskey_cli import image
+        from nekofedi import image
 
         with patch(
-            "misskey_cli.image.detect_graphics_backend", return_value="sixel"
-        ), patch("misskey_cli.image.render_image_256") as r256, \
-             patch("misskey_cli.image.render_image_sixel") as rsx, \
-             patch("misskey_cli.image.render_image_kitty") as rkt:
+            "nekofedi.image.detect_graphics_backend", return_value="sixel"
+        ), patch("nekofedi.image.render_image_256") as r256, \
+             patch("nekofedi.image.render_image_sixel") as rsx, \
+             patch("nekofedi.image.render_image_kitty") as rkt:
             rsx.return_value = "sixel"
             image.render_image_auto(b"x", max_cols=80, backend="auto")
         rsx.assert_called_once()
@@ -1801,13 +1801,13 @@ class TestRenderImageAutoDispatch:
         rkt.assert_not_called()
 
     def test_auto_falls_back_to_256(self):
-        from misskey_cli import image
+        from nekofedi import image
 
         with patch(
-            "misskey_cli.image.detect_graphics_backend", return_value="none"
-        ), patch("misskey_cli.image.render_image_256") as r256, \
-             patch("misskey_cli.image.render_image_sixel") as rsx, \
-             patch("misskey_cli.image.render_image_kitty") as rkt:
+            "nekofedi.image.detect_graphics_backend", return_value="none"
+        ), patch("nekofedi.image.render_image_256") as r256, \
+             patch("nekofedi.image.render_image_sixel") as rsx, \
+             patch("nekofedi.image.render_image_kitty") as rkt:
             r256.return_value = "256"
             image.render_image_auto(b"x", max_cols=80, backend="auto")
         r256.assert_called_once()
@@ -1815,11 +1815,11 @@ class TestRenderImageAutoDispatch:
         rkt.assert_not_called()
 
     def test_unknown_backend_falls_back_to_256(self):
-        from misskey_cli import image
+        from nekofedi import image
 
-        with patch("misskey_cli.image.render_image_256") as r256, \
-             patch("misskey_cli.image.render_image_sixel") as rsx, \
-             patch("misskey_cli.image.render_image_kitty") as rkt:
+        with patch("nekofedi.image.render_image_256") as r256, \
+             patch("nekofedi.image.render_image_sixel") as rsx, \
+             patch("nekofedi.image.render_image_kitty") as rkt:
             r256.return_value = "256"
             image.render_image_auto(b"x", max_cols=80, backend="bogus")
         r256.assert_called_once()
@@ -1827,9 +1827,9 @@ class TestRenderImageAutoDispatch:
         rkt.assert_not_called()
 
     def test_sixel_pixel_width_derived_from_cols(self):
-        from misskey_cli import image
+        from nekofedi import image
 
-        with patch("misskey_cli.image.render_image_sixel") as rsx:
+        with patch("nekofedi.image.render_image_sixel") as rsx:
             rsx.return_value = ""
             image.render_image_auto(b"x", max_cols=80, backend="sixel")
         # 80 cols * CELL_PIXEL_WIDTH (10) = 800 px
@@ -1843,7 +1843,7 @@ class TestCmdImageBackend:
     def test_show_current(self, capsys):
         cli, _ = _build_stub_cli()
         with patch(
-            "misskey_cli.config.get_image_backend", return_value="auto"
+            "nekofedi.config.get_image_backend", return_value="auto"
         ):
             cli.cmd_image_backend("")
         out = capsys.readouterr().out
@@ -1851,25 +1851,25 @@ class TestCmdImageBackend:
 
     def test_set_sixel(self):
         cli, _ = _build_stub_cli()
-        with patch("misskey_cli.config.set_image_backend") as set_ib:
+        with patch("nekofedi.config.set_image_backend") as set_ib:
             cli.cmd_image_backend("sixel")
         set_ib.assert_called_once_with("sixel")
 
     def test_set_kitty(self):
         cli, _ = _build_stub_cli()
-        with patch("misskey_cli.config.set_image_backend") as set_ib:
+        with patch("nekofedi.config.set_image_backend") as set_ib:
             cli.cmd_image_backend("kitty")
         set_ib.assert_called_once_with("kitty")
 
     def test_set_256(self):
         cli, _ = _build_stub_cli()
-        with patch("misskey_cli.config.set_image_backend") as set_ib:
+        with patch("nekofedi.config.set_image_backend") as set_ib:
             cli.cmd_image_backend("256")
         set_ib.assert_called_once_with("256")
 
     def test_invalid_value_errors(self, capsys):
         cli, _ = _build_stub_cli()
-        with patch("misskey_cli.config.set_image_backend") as set_ib:
+        with patch("nekofedi.config.set_image_backend") as set_ib:
             cli.cmd_image_backend("bogus")
         assert capsys.readouterr().err
         set_ib.assert_not_called()
@@ -1878,7 +1878,7 @@ class TestCmdImageBackend:
         """image_backend is a terminal setting, not account-bound."""
         cli, stub = _build_stub_cli()
         stub.logged_in = False
-        with patch("misskey_cli.config.set_image_backend") as set_ib:
+        with patch("nekofedi.config.set_image_backend") as set_ib:
             cli.cmd_image_backend("sixel")
         set_ib.assert_called_once_with("sixel")
 
@@ -1908,9 +1908,9 @@ def test_help_lists_image_backend(capsys):
 
 def test_main_probes_graphics_backend_once():
     """main.main() must probe the graphics backend once, before
-    MisskeyCLI is constructed, so prompt_toolkit doesn't collide with
+    NekofediCLI is constructed, so prompt_toolkit doesn't collide with
     the DA1 query."""
-    from misskey_cli import main as main_mod
+    from nekofedi import main as main_mod
 
     call_order = []
 
@@ -1929,11 +1929,11 @@ def test_main_probes_graphics_backend_once():
         def cmdloop(self):
             call_order.append("cmdloop")
 
-    with patch("misskey_cli.main.run_upgrade"), \
-         patch("misskey_cli.main.init_language"), \
-         patch("misskey_cli.image.detect_graphics_backend", side_effect=fake_probe), \
-         patch("misskey_cli.main.MisskeyCLI", FakeCLI), \
-         patch("sys.argv", ["misskey-cli", "-c", "help"]), \
+    with patch("nekofedi.main.run_upgrade"), \
+         patch("nekofedi.main.init_language"), \
+         patch("nekofedi.image.detect_graphics_backend", side_effect=fake_probe), \
+         patch("nekofedi.main.NekofediCLI", FakeCLI), \
+         patch("sys.argv", ["nekofedi", "-c", "help"]), \
          patch("sys.exit"):
         main_mod.main()
 

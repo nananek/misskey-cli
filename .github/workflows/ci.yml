@@ -13,14 +13,14 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build -t misskey-cli .
+        run: docker build -t nekofedi .
 
       - name: Test import
         run: |
-          docker run --rm --entrypoint python misskey-cli -c "
-          from misskey_cli.migrate import run_upgrade
-          from misskey_cli.api import MisskeyClient
-          from misskey_cli.cli import MisskeyCLI
+          docker run --rm --entrypoint python nekofedi -c "
+          from nekofedi.migrate import run_upgrade
+          from nekofedi.api import MisskeyClient
+          from nekofedi.cli import NekofediCLI
           print('import ok')
           "
 
@@ -30,18 +30,18 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build -t misskey-cli .
+        run: docker build -t nekofedi .
 
       - name: Run unit tests
         run: |
           docker run --rm \
             -e PYTHONPATH=/app \
-            --entrypoint pytest misskey-cli \
+            --entrypoint pytest nekofedi \
             tests/test_i18n.py tests/test_mastodon_unit.py -v
 
       - name: Verify locales installed
         run: |
-          docker run --rm --entrypoint locale misskey-cli -a | grep -E '^(en_US|ja_JP|fr_FR)\.utf8$'
+          docker run --rm --entrypoint locale nekofedi -a | grep -E '^(en_US|ja_JP|fr_FR)\.utf8$'
 
   e2e:
     runs-on: ubuntu-latest
@@ -66,14 +66,14 @@ jobs:
           exit 1
 
       - name: Build Docker image
-        run: docker build -t misskey-cli .
+        run: docker build -t nekofedi .
 
       - name: Run E2E tests
         run: |
           docker run --rm \
             --network tests_net \
             -e MISSKEY_HOST=misskey:3000 \
-            --entrypoint python misskey-cli \
+            --entrypoint python nekofedi \
             -m pytest tests/test_e2e.py -v
 
       - name: Cleanup
@@ -104,14 +104,14 @@ jobs:
           exit 1
 
       - name: Build Docker image
-        run: docker build -t misskey-cli .
+        run: docker build -t nekofedi .
 
       - name: Run Nekonoverse E2E tests
         run: |
           docker run --rm \
             --network nekotest_net \
             -e NEKONOVERSE_HOST=app:8000 \
-            --entrypoint python misskey-cli \
+            --entrypoint python nekofedi \
             -m pytest tests/test_nekonoverse_e2e.py -v
 
       - name: Cleanup
@@ -142,14 +142,14 @@ jobs:
           exit 1
 
       - name: Build Docker image
-        run: docker build -t misskey-cli .
+        run: docker build -t nekofedi .
 
       - name: Run Mastodon E2E tests
         run: |
           docker run --rm \
             --network mastotest_net \
             -e MASTODON_HOST=web:3000 \
-            --entrypoint python misskey-cli \
+            --entrypoint python nekofedi \
             -m pytest tests/test_mastodon_e2e.py -v
 
       - name: Cleanup
@@ -180,14 +180,14 @@ jobs:
           exit 1
 
       - name: Build Docker image
-        run: docker build -t misskey-cli .
+        run: docker build -t nekofedi .
 
       - name: Run Pleroma E2E tests
         run: |
           docker run --rm \
             --network pltest_net \
             -e PLEROMA_HOST=pleroma:4000 \
-            --entrypoint python misskey-cli \
+            --entrypoint python nekofedi \
             -m pytest tests/test_pleroma_e2e.py -v
 
       - name: Cleanup
@@ -224,7 +224,7 @@ jobs:
           exit 1
 
       - name: Build Docker image
-        run: docker build -t misskey-cli .
+        run: docker build -t nekofedi .
 
       - name: Extract bob token
         id: fbtoken
@@ -246,7 +246,7 @@ jobs:
             --network fbtest_net \
             -e FEDIBIRD_HOST=web:3000 \
             -e FEDIBIRD_TOKEN=${{ steps.fbtoken.outputs.token }} \
-            --entrypoint python misskey-cli \
+            --entrypoint python nekofedi \
             -m pytest tests/test_fedibird_e2e.py -v
 
       - name: Cleanup

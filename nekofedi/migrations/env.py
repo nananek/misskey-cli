@@ -1,6 +1,6 @@
 from alembic import context
 
-from misskey_cli.db import Base, get_engine
+from nekofedi.db import Base, get_engine
 
 target_metadata = Base.metadata
 

@@ -1,12 +1,12 @@
-# misskey-cli
+# nekofedi
 
-prompt_toolkit ベースの Misskey インタラクティブ CLI クライアント。
+prompt_toolkit ベースの fediverse インタラクティブ CLI クライアント。Misskey / Mastodon / Fedibird / Pleroma / Akkoma / GoToSocial / Hometown / Nekonoverse 等、絵文字リアクションが使える幅広いサーバに対応。
 
 ## セットアップ
 
 ```sh
-docker pull ghcr.io/nananek/misskey-cli:latest
-mkdir -p ~/.config/misskey-cli
+docker pull ghcr.io/nekonoverse/nekofedi:latest
+mkdir -p ~/.config/nekofedi
 ```
 
 ## 使い方
@@ -15,8 +15,8 @@ mkdir -p ~/.config/misskey-cli
 docker run -it --user $(id -u):$(id -g) \
   -e TZ=Asia/Tokyo \
   -e LANG=ja_JP.UTF-8 \
-  -v ~/.config/misskey-cli:/home/user/.config/misskey-cli \
-  ghcr.io/nananek/misskey-cli:latest
+  -v ~/.config/nekofedi:/home/user/.config/nekofedi \
+  ghcr.io/nekonoverse/nekofedi:latest
 ```
 
 `TZ` 環境変数でタイムラインの日時表示タイムゾーンを指定できます (省略時は UTC)。
@@ -137,14 +137,14 @@ vim の場合は dictionary completion として読み込まれるので、`<C-n
 
 ```sh
 # -c で 1 行ずつ (繰り返し指定可)
-misskey-cli -c "account use @alice@misskey.example" -c "note_text public Hello"
+nekofedi -c "account use @alice@misskey.example" -c "note_text public Hello"
 
 # -f でファイルから (`-` は stdin)
-misskey-cli -f ./deploy.msk
+nekofedi -f ./deploy.msk
 
 # 標準入力が TTY でなければ自動的にスクリプトモード
-echo "tl home 5" | misskey-cli
-cat deploy.msk | misskey-cli
+echo "tl home 5" | nekofedi
+cat deploy.msk | nekofedi
 ```
 
 スクリプト形式:
@@ -160,20 +160,20 @@ Docker からは標準入力をつないで実行:
 
 ```sh
 docker run --rm -i --user $(id -u):$(id -g) \
-  -v ~/.config/misskey-cli:/home/user/.config/misskey-cli \
-  ghcr.io/nananek/misskey-cli:latest -c "tl home 5"
+  -v ~/.config/nekofedi:/home/user/.config/nekofedi \
+  ghcr.io/nekonoverse/nekofedi:latest -c "tl home 5"
 ```
 
 `note` / `reply` / `login` (MiAuth) はエディタやブラウザを開くためスクリプト向きではありません。事前に対話モードでログインしておき、スクリプトでは `note_text` / `reply_text` を使ってください。
 
 ## 設定
 
-`~/.config/misskey-cli/` に SQLite データベースとコマンド履歴が保存されます。
+`~/.config/nekofedi/` に SQLite データベースとコマンド履歴が保存されます。
 スキーマ変更は Alembic マイグレーションで管理されており、起動時に自動適用されます。
 トークンは初回ログイン後に永続化され、次回以降は自動ログインします。
 
 表示言語は `lang` コマンドで切り替え可能 (en / ja / fr、デフォルトは en)。
-起動時の決定順序: `MISSKEY_CLI_LANG` → DB 保存値 → `LANG` の先頭2文字 → en
+起動時の決定順序: `NEKOFEDI_LANG` → DB 保存値 → `LANG` の先頭2文字 → en
 Docker イメージには `en_US.UTF-8` / `ja_JP.UTF-8` / `fr_FR.UTF-8` ロケールが入っているので、`-e LANG=ja_JP.UTF-8` 等で OS ロケールごと切替できます。
 
 ## ライセンス
