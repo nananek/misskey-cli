@@ -10,8 +10,8 @@ from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import FileHistory
 
 from .api import (
+    MASTODON_SOFTWARE,
     MIAUTH_SOFTWARE,
-    NEKONOVERSE_SOFTWARE,
     detect_software,
     make_client,
     parse_host_arg,
@@ -411,7 +411,7 @@ class MisskeyCLI:
             print(_("error.detect_failed_hint"))
             return
         print(_("status.detected", software=software))
-        if software not in MIAUTH_SOFTWARE and software != NEKONOVERSE_SOFTWARE:
+        if software not in MIAUTH_SOFTWARE and software not in MASTODON_SOFTWARE:
             print(_("error.unsupported_server", software=software))
             return
         client = make_client(software=software, scheme=scheme)
@@ -718,8 +718,11 @@ class MisskeyCLI:
         if not reaction.startswith(":"):
             reaction = f":{reaction}:"
         try:
-            self.client.react(note_id, reaction)
-            print(_("status.reacted", reaction=reaction))
+            result = self.client.react(note_id, reaction)
+            if result is None and getattr(self.client, "software", None):
+                print(_("status.reacted_favourite_fallback", software=self.client.software))
+            else:
+                print(_("status.reacted", reaction=reaction))
         except Exception as e:
             print(_("error.generic", message=str(e)))
 

@@ -17,9 +17,13 @@ PERMISSIONS = [
     "write:reactions",
 ]
 
+MASTODON_SCOPES = "read write follow"
+MASTODON_OOB_REDIRECT = "urn:ietf:wg:oauth:2.0:oob"
+
+# Back-compat aliases (external code may still reference these).
 NEKONOVERSE_SOFTWARE = "nekonoverse"
-NEKONOVERSE_SCOPES = "read write follow"
-NEKONOVERSE_OOB_REDIRECT = "urn:ietf:wg:oauth:2.0:oob"
+NEKONOVERSE_SCOPES = MASTODON_SCOPES
+NEKONOVERSE_OOB_REDIRECT = MASTODON_OOB_REDIRECT
 
 # Software families that speak MiAuth (Misskey-derived)
 MIAUTH_SOFTWARE = {
@@ -34,6 +38,23 @@ MIAUTH_SOFTWARE = {
     "catodon",
     "magnetar",
 }
+
+# Software families that speak the Mastodon client API (login via OAuth OOB).
+MASTODON_SOFTWARE = frozenset(
+    {
+        "mastodon",
+        "fedibird",
+        "pleroma",
+        "akkoma",
+        "gotosocial",
+        "hometown",
+        "nekonoverse",
+    }
+)
+
+# Mastodon family members that support the Pleroma emoji-reaction extension
+# (`PUT /api/v1/pleroma/statuses/:id/reactions/:emoji`).
+_PLEROMA_REACTION_SOFTWARE = frozenset({"pleroma", "akkoma"})
 
 
 def parse_host_arg(arg):
@@ -54,7 +75,9 @@ def detect_software(host, scheme="https"):
     """Discover server software via nodeinfo.
 
     Returns the lowercase software name (e.g. 'misskey', 'mastodon') or None
-    if discovery fails.
+    if discovery fails. Applies a Fedibird fallback: some Fedibird instances
+    self-report ``software.name == "mastodon"`` but leak ``fedibird`` in the
+    version or repository URL.
     """
     try:
         r = requests.get(f"{scheme}://{host}/.well-known/nodeinfo", timeout=10)
@@ -66,10 +89,23 @@ def detect_software(host, scheme="https"):
         href = links[-1].get("href")
         if not href:
             return None
-        r = requests.get(href, timeout=10)
+        # Mastodon-family instances hardcode https:// in the nodeinfo href
+        # because Rails `url_for` uses ``force_ssl``. When the caller is
+        # deliberately talking http (tests against a local proxy), keep the
+        # request on the original scheme+host by using only the path.
+        parsed = urllib.parse.urlparse(href)
+        nodeinfo_url = f"{scheme}://{host}{parsed.path}" if parsed.path else href
+        r = requests.get(nodeinfo_url, timeout=10)
         r.raise_for_status()
-        name = (r.json().get("software") or {}).get("name")
-        return name.lower() if name else None
+        sw = r.json().get("software") or {}
+        name = (sw.get("name") or "").lower()
+        if not name:
+            return None
+        if name == "mastodon":
+            blob = f"{sw.get('version', '')} {sw.get('repository', '')}".lower()
+            if "fedibird" in blob:
+                return "fedibird"
+        return name
     except (requests.RequestException, ValueError, KeyError, TypeError):
         return None
 
@@ -171,19 +207,26 @@ class MisskeyClient(_BaseClient):
         return resp.json().get("emojis", [])
 
 
-class NekonoverseClient(_BaseClient):
-    """Mastodon-compatible client for Nekonoverse.
+class MastodonClient(_BaseClient):
+    """Mastodon client API implementation.
 
-    Methods normalize Mastodon NoteResponse / Notification into Misskey-shaped
-    dicts so the CLI's existing formatters and reply logic work unchanged.
+    Drives Mastodon, Fedibird, Pleroma, Akkoma, GoToSocial, Hometown and
+    Nekonoverse. Methods normalize Mastodon NoteResponse / Notification into
+    Misskey-shaped dicts so the CLI's existing formatters and reply logic work
+    unchanged. Per-software behaviour (emoji reactions) is dispatched on
+    ``self.software``.
     """
 
     _VIS_OUT = {"home": "unlisted", "specified": "direct"}
     _VIS_IN = {"unlisted": "home", "direct": "specified"}
-    # Mirrors Nekonoverse's CUSTOM_EMOJI_PATTERN so we can tell a real
-    # `:shortcode:` (which the server wants colon-wrapped) apart from a
-    # unicode emoji that the CLI wrapped in colons before passing it down.
+    # Detects a real `:shortcode:` (which Mastodon-family servers accept as-is)
+    # so we can unwrap unicode emoji that the CLI wraps in colons before
+    # handing it down.
     _SHORTCODE_RE = re.compile(r"^:([a-zA-Z0-9_]+)(?:@([a-zA-Z0-9.-]+))?:$")
+
+    def __init__(self, host=None, token=None, scheme="https", software="mastodon"):
+        super().__init__(host=host, token=token, scheme=scheme)
+        self.software = software
 
     def _headers(self):
         h = {"Accept": "application/json"}
@@ -207,6 +250,34 @@ class NekonoverseClient(_BaseClient):
         resp.raise_for_status()
         return resp.json() if resp.content else None
 
+    def _put(self, path, json=None):
+        resp = requests.put(
+            self._url(path),
+            json=json,
+            headers=self._headers(),
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json() if resp.content else None
+
+    @classmethod
+    def _unwrap_emoji(cls, reaction):
+        """Strip the surrounding colons from a unicode-emoji reaction.
+
+        The CLI auto-wraps every reaction in colons (``:foo:`` / ``:⭐:``).
+        Mastodon-family servers expect real shortcodes wrapped in colons but
+        unicode emoji bare, so unwrap anything that doesn't look like a
+        shortcode.
+        """
+        if (
+            len(reaction) >= 2
+            and reaction.startswith(":")
+            and reaction.endswith(":")
+            and not cls._SHORTCODE_RE.match(reaction)
+        ):
+            return reaction[1:-1]
+        return reaction
+
     # ----- Auth (OAuth OOB) -----
 
     def login(self, host):
@@ -216,8 +287,8 @@ class NekonoverseClient(_BaseClient):
             self._url("api/v1/apps"),
             json={
                 "client_name": "misskey-cli",
-                "redirect_uris": NEKONOVERSE_OOB_REDIRECT,
-                "scopes": NEKONOVERSE_SCOPES,
+                "redirect_uris": MASTODON_OOB_REDIRECT,
+                "scopes": MASTODON_SCOPES,
             },
             timeout=30,
         )
@@ -233,8 +304,8 @@ class NekonoverseClient(_BaseClient):
                 {
                     "response_type": "code",
                     "client_id": client_id,
-                    "redirect_uri": NEKONOVERSE_OOB_REDIRECT,
-                    "scope": NEKONOVERSE_SCOPES,
+                    "redirect_uri": MASTODON_OOB_REDIRECT,
+                    "scope": MASTODON_SCOPES,
                 }
             )
         )
@@ -253,8 +324,8 @@ class NekonoverseClient(_BaseClient):
                 "code": code,
                 "client_id": client_id,
                 "client_secret": client_secret,
-                "redirect_uri": NEKONOVERSE_OOB_REDIRECT,
-                "scope": NEKONOVERSE_SCOPES,
+                "redirect_uri": MASTODON_OOB_REDIRECT,
+                "scope": MASTODON_SCOPES,
             },
             timeout=30,
         )
@@ -284,13 +355,21 @@ class NekonoverseClient(_BaseClient):
         }
 
     def timeline(self, tl_type="home", limit=10):
+        # Fedibird reinterprets ``local=true`` as "local-only visibility" and
+        # uses ``remote=false`` to mean "public timeline without remote posts".
+        local_key = "remote" if self.software == "fedibird" else "local"
+        local_val = "false" if self.software == "fedibird" else "true"
         if tl_type == "home":
             statuses = self._get("api/v1/timelines/home", limit=limit)
         elif tl_type == "local":
-            statuses = self._get("api/v1/timelines/public", local="true", limit=limit)
+            statuses = self._get(
+                "api/v1/timelines/public", **{local_key: local_val}, limit=limit
+            )
         elif tl_type == "hybrid":
             # Mastodon has no hybrid timeline; fall back to local.
-            statuses = self._get("api/v1/timelines/public", local="true", limit=limit)
+            statuses = self._get(
+                "api/v1/timelines/public", **{local_key: local_val}, limit=limit
+            )
         elif tl_type == "global":
             statuses = self._get("api/v1/timelines/public", limit=limit)
         else:
@@ -319,19 +398,25 @@ class NekonoverseClient(_BaseClient):
         return self._normalize_note(s) if s else None
 
     def react(self, note_id, reaction):
-        # The CLI auto-wraps every reaction in colons (`:foo:` / `:⭐:`).
-        # Nekonoverse expects custom shortcodes colon-wrapped but unicode
-        # emoji bare, so unwrap anything that doesn't look like a shortcode.
-        emoji = reaction
-        if (
-            len(emoji) >= 2
-            and emoji.startswith(":")
-            and emoji.endswith(":")
-            and not self._SHORTCODE_RE.match(emoji)
-        ):
-            emoji = emoji[1:-1]
+        """React to a note. Dispatches on ``self.software``.
+
+        Returns the parsed response on success. Returns ``None`` when the
+        server has no emoji-reaction endpoint and we fall back to ``favourite``,
+        so the CLI can surface that degradation to the user.
+        """
+        emoji = self._unwrap_emoji(reaction)
         encoded = urllib.parse.quote(emoji, safe="")
-        return self._post(f"api/v1/statuses/{note_id}/react/{encoded}")
+        if self.software in _PLEROMA_REACTION_SOFTWARE:
+            return self._put(f"api/v1/pleroma/statuses/{note_id}/reactions/{encoded}")
+        if self.software == "fedibird":
+            # Fedibird exposes its own PUT /api/v1/statuses/:id/emoji_reactions/:emoji
+            # (distinct from the Pleroma extension path, which it doesn't ship).
+            return self._put(f"api/v1/statuses/{note_id}/emoji_reactions/{encoded}")
+        if self.software == "nekonoverse":
+            return self._post(f"api/v1/statuses/{note_id}/react/{encoded}")
+        # mastodon / gotosocial / hometown: no custom emoji reactions.
+        self._post(f"api/v1/statuses/{note_id}/favourite")
+        return None
 
     def notifications(self, limit=10):
         notifs = self._get("api/v1/notifications", limit=limit)
@@ -368,8 +453,13 @@ class NekonoverseClient(_BaseClient):
             return out
 
         # Fedibird-style emoji_reactions (preferred — preserves shortcodes),
-        # falling back to Mastodon ReactionSummary.
-        return collect(status.get("emoji_reactions")) or collect(status.get("reactions"))
+        # Pleroma-style pleroma.emoji_reactions, Mastodon ReactionSummary.
+        pleroma = (status.get("pleroma") or {}).get("emoji_reactions")
+        return (
+            collect(status.get("emoji_reactions"))
+            or collect(pleroma)
+            or collect(status.get("reactions"))
+        )
 
     def _normalize_note(self, s):
         if not s:
@@ -394,15 +484,28 @@ class NekonoverseClient(_BaseClient):
         }
 
     def _normalize_notif(self, n):
-        type_map = {"reblog": "renote", "favourite": "reaction"}
+        type_map = {
+            "reblog": "renote",
+            "favourite": "reaction",
+            "pleroma:emoji_reaction": "reaction",
+        }
         raw_type = n.get("type")
         reaction = None
         if raw_type == "favourite":
             reaction = "⭐"
         elif raw_type == "reaction":
-            # Fedibird-style emoji reaction notification.
+            # Nekonoverse-style emoji reaction notification.
             emoji = n.get("emoji") or {}
             reaction = (emoji.get("shortcode") and f":{emoji['shortcode']}:") or n.get("emoji_name") or "⭐"
+        elif raw_type == "pleroma:emoji_reaction":
+            # Pleroma/Fedibird: {"emoji": "🎉"} for unicode,
+            # {"emoji": ":shortcode:"} for custom (already colon-wrapped).
+            raw = n.get("emoji") or n.get("name") or "⭐"
+            if isinstance(raw, dict):
+                # Defensive: some implementations embed a dict.
+                raw = raw.get("shortcode") or raw.get("name") or "⭐"
+                raw = f":{raw}:" if raw and not raw.startswith(":") else raw
+            reaction = raw
         return {
             "type": type_map.get(raw_type, raw_type),
             "createdAt": n.get("created_at"),
@@ -431,6 +534,11 @@ class NekonoverseClient(_BaseClient):
         return html.unescape(s).strip()
 
 
+# Back-compat alias so `from misskey_cli.api import NekonoverseClient` keeps
+# working (existing tests and any external callers).
+NekonoverseClient = MastodonClient
+
+
 def make_client(host=None, token=None, software=None, scheme=None):
     """Build the appropriate client for the active (or given) account.
 
@@ -450,6 +558,6 @@ def make_client(host=None, token=None, software=None, scheme=None):
                 scheme = acct.scheme
     if scheme is None:
         scheme = "https"
-    if software == NEKONOVERSE_SOFTWARE:
-        return NekonoverseClient(host=host, token=token, scheme=scheme)
+    if software in MASTODON_SOFTWARE:
+        return MastodonClient(host=host, token=token, scheme=scheme, software=software)
     return MisskeyClient(host=host, token=token, scheme=scheme)

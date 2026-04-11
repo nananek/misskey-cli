@@ -1,0 +1,44 @@
+services:
+  postgres-pl:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: pleroma
+      POSTGRES_USER: pleroma
+      POSTGRES_PASSWORD: testpass
+    networks:
+      - net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pleroma"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  pleroma:
+    image: ghcr.io/explodingcamera/pleroma:stable
+    entrypoint: ["/custom-entrypoint.sh"]
+    environment:
+      DOMAIN: pleroma
+      INSTANCE_NAME: "Pleroma Test"
+      ADMIN_EMAIL: admin@pleroma
+      NOTIFY_EMAIL: notify@pleroma
+      DB_HOST: postgres-pl
+      DB_USER: pleroma
+      DB_PASS: testpass
+      DB_NAME: pleroma
+    volumes:
+      - ./pleroma-config.exs:/data/config.exs:ro
+      - ./pleroma-entrypoint.sh:/custom-entrypoint.sh:ro
+    depends_on:
+      postgres-pl:
+        condition: service_healthy
+    networks:
+      - net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://127.0.0.1:4000/api/v1/instance || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
+networks:
+  net:

@@ -37,7 +37,7 @@ jobs:
           docker run --rm \
             -e PYTHONPATH=/app \
             --entrypoint pytest misskey-cli \
-            tests/test_i18n.py -v
+            tests/test_i18n.py tests/test_mastodon_unit.py -v
 
       - name: Verify locales installed
         run: |
@@ -117,3 +117,138 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker compose -f tests/nekonoverse-compose.yml -p nekotest down -v
+
+  e2e-mastodon:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start Mastodon
+        run: docker compose -f tests/mastodon-compose.yml -p mastotest up -d
+
+      - name: Wait for Mastodon
+        run: |
+          for i in $(seq 1 60); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' mastotest-mastodon-app-1 2>/dev/null || echo "missing")
+            if [ "$status" = "healthy" ]; then
+              echo "Mastodon is ready"
+              exit 0
+            fi
+            echo "Waiting... ($i/60) status=$status"
+            sleep 5
+          done
+          echo "Mastodon failed to start"
+          docker compose -f tests/mastodon-compose.yml -p mastotest logs mastodon-app
+          exit 1
+
+      - name: Build Docker image
+        run: docker build -t misskey-cli .
+
+      - name: Run Mastodon E2E tests
+        run: |
+          docker run --rm \
+            --network mastotest_net \
+            -e MASTODON_HOST=web:3000 \
+            --entrypoint python misskey-cli \
+            -m pytest tests/test_mastodon_e2e.py -v
+
+      - name: Cleanup
+        if: always()
+        run: docker compose -f tests/mastodon-compose.yml -p mastotest down -v
+
+  e2e-pleroma:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start Pleroma
+        run: docker compose -f tests/pleroma-compose.yml -p pltest up -d
+
+      - name: Wait for Pleroma
+        run: |
+          for i in $(seq 1 60); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' pltest-pleroma-1 2>/dev/null || echo "missing")
+            if [ "$status" = "healthy" ]; then
+              echo "Pleroma is ready"
+              exit 0
+            fi
+            echo "Waiting... ($i/60) status=$status"
+            sleep 5
+          done
+          echo "Pleroma failed to start"
+          docker compose -f tests/pleroma-compose.yml -p pltest logs pleroma
+          exit 1
+
+      - name: Build Docker image
+        run: docker build -t misskey-cli .
+
+      - name: Run Pleroma E2E tests
+        run: |
+          docker run --rm \
+            --network pltest_net \
+            -e PLEROMA_HOST=pleroma:4000 \
+            --entrypoint python misskey-cli \
+            -m pytest tests/test_pleroma_e2e.py -v
+
+      - name: Cleanup
+        if: always()
+        run: docker compose -f tests/pleroma-compose.yml -p pltest down -v
+
+  e2e-fedibird:
+    runs-on: ubuntu-latest
+    # Fedibird is built from source on every run (no prebuilt image on GHCR),
+    # which takes 5-10 minutes. Give it plenty of headroom.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Fedibird image
+        run: docker compose -f tests/fedibird-compose.yml -p fbtest build
+
+      - name: Start Fedibird
+        run: docker compose -f tests/fedibird-compose.yml -p fbtest up -d
+
+      - name: Wait for Fedibird
+        run: |
+          for i in $(seq 1 120); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' fbtest-fedibird-app-1 2>/dev/null || echo "missing")
+            if [ "$status" = "healthy" ]; then
+              echo "Fedibird is ready"
+              exit 0
+            fi
+            echo "Waiting... ($i/120) status=$status"
+            sleep 5
+          done
+          echo "Fedibird failed to start"
+          docker compose -f tests/fedibird-compose.yml -p fbtest logs fedibird-app
+          exit 1
+
+      - name: Build Docker image
+        run: docker build -t misskey-cli .
+
+      - name: Extract bob token
+        id: fbtoken
+        run: |
+          # Fedibird disables OAuth grant_type=password, so fedibird-entrypoint.sh
+          # mints a Doorkeeper access token in-DB and writes it to /tmp/bob-token.
+          TOKEN=$(docker exec fbtest-fedibird-app-1 cat /tmp/bob-token)
+          if [ -z "$TOKEN" ]; then
+            echo "Failed to read bob token from Fedibird container"
+            docker compose -f tests/fedibird-compose.yml -p fbtest logs fedibird-app
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Run Fedibird E2E tests
+        run: |
+          docker run --rm \
+            --network fbtest_net \
+            -e FEDIBIRD_HOST=web:3000 \
+            -e FEDIBIRD_TOKEN=${{ steps.fbtoken.outputs.token }} \
+            --entrypoint python misskey-cli \
+            -m pytest tests/test_fedibird_e2e.py -v
+
+      - name: Cleanup
+        if: always()
+        run: docker compose -f tests/fedibird-compose.yml -p fbtest down -v

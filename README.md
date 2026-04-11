@@ -25,10 +25,20 @@ docker run -it --user $(id -u):$(id -g) \
 ## 対応サーバー
 
 - **Misskey 系** (Misskey / Sharkey / Firefish / Iceshrimp / CherryPick / Foundkey / Meisskey / Catodon / Magnetar): MiAuth でログイン
-- **Nekonoverse**: Mastodon 互換 OAuth (OOB) でログイン
+- **Mastodon 系** (Mastodon / Fedibird / Pleroma / Akkoma / GoToSocial / Hometown / Nekonoverse): Mastodon 互換 OAuth (OOB) でログイン
 
 `login <host>` 実行時に nodeinfo からサーバー種別を自動判別します。
 ローカル検証用に `login http://localhost:8000` のように `http://` / `https://` プレフィックスを付けることもできます (省略時は https)。
+
+### リアクションの挙動
+
+`react` コマンドはサーバー種別に応じて自動でエンドポイントを切り替えます:
+
+- **Misskey 系**: ネイティブの絵文字リアクション (`api/notes/reactions/create`)
+- **Pleroma / Akkoma**: Pleroma 拡張 (`PUT /api/v1/pleroma/statuses/:id/reactions/:emoji`) でカスタム絵文字を含めてリアクション可能
+- **Fedibird**: Fedibird 独自の絵文字リアクション API (`PUT /api/v1/statuses/:id/emoji_reactions/:emoji`)
+- **Nekonoverse**: Mastodon 互換のリアクション API (`POST /api/v1/statuses/:id/react/:emoji`)
+- **Mastodon / GoToSocial / Hometown**: 絵文字リアクション API が存在しないため、`favourite` (お気に入り) にフォールバックします (カスタム絵文字も一律 ⭐ 相当)
 
 ## コマンド一覧
 
