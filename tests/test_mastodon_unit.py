@@ -513,3 +513,142 @@ class TestListTimeline:
         c = MisskeyClient(host="m.example", token="t", scheme="http")
         with pytest.raises(ValueError):
             c.timeline("bogus", limit=5)
+
+
+# ---------- CLI: tl list / default_timeline list completion and parsing ----------
+
+
+class TestListCompleterAndCmds:
+    """Covers the `tl list <target>` / `default_timeline list <target>` paths:
+
+    - Tab completion at the ``<target>`` position offers list names
+    - ``cmd_tl`` parses ``tl list <name>`` and resolves to an id
+    - ``cmd_tl`` still accepts a bare limit (``tl list 5``) → active list
+    - ``cmd_default_timeline list <target>`` switches the active list and
+      sets the default in one shot
+    """
+
+    @staticmethod
+    def _completer():
+        from misskey_cli.cli import MisskeyCompleter
+
+        lists = [
+            {"id": "abc", "name": "friends"},
+            {"id": "def", "name": "family"},
+        ]
+        return MisskeyCompleter(
+            get_emoji_names=lambda: [],
+            get_note_meta=lambda: [],
+            get_lists=lambda: lists,
+        )
+
+    @staticmethod
+    def _complete(completer, text):
+        from prompt_toolkit.document import Document
+
+        doc = Document(text=text, cursor_position=len(text))
+        return [c.text for c in completer.get_completions(doc, None)]
+
+    def test_tl_list_offers_list_names(self):
+        with patch("misskey_cli.config.get_active_list_id", return_value=None):
+            results = self._complete(self._completer(), "tl list ")
+        assert "friends" in results
+        assert "family" in results
+
+    def test_tl_list_prefix_filter(self):
+        with patch("misskey_cli.config.get_active_list_id", return_value=None):
+            results = self._complete(self._completer(), "tl list fr")
+        assert results == ["friends"]
+
+    def test_default_timeline_list_offers_list_names(self):
+        with patch("misskey_cli.config.get_active_list_id", return_value=None):
+            results = self._complete(self._completer(), "default_timeline list ")
+        assert "friends" in results
+        assert "family" in results
+
+    def test_list_use_still_works(self):
+        """Regression: the new helper shouldn't break the original `list use` path."""
+        with patch("misskey_cli.config.get_active_list_id", return_value=None):
+            results = self._complete(self._completer(), "list use fr")
+        assert results == ["friends"]
+
+    # --- cmd-level parsing ---
+
+    @staticmethod
+    def _build_cli(lists_result=None):
+        """Instantiate MisskeyCLI with the client and DB side-effects stubbed out."""
+        from misskey_cli.cli import MisskeyCLI
+
+        with patch("misskey_cli.cli.make_client") as mc, \
+             patch("misskey_cli.config.CONFIG_DIR") as cd, \
+             patch("misskey_cli.cli.PromptSession"):
+            cd.mkdir = MagicMock()
+            stub = MagicMock()
+            stub.logged_in = True
+            stub.i.return_value = {"id": "u1", "username": "bob", "name": "Bob"}
+            stub.timeline.return_value = []
+            stub.lists.return_value = lists_result or [
+                {"id": "abc", "name": "friends"},
+                {"id": "def", "name": "family"},
+            ]
+            mc.return_value = stub
+            cli = MisskeyCLI()
+            return cli, stub
+
+    def test_cmd_tl_list_with_target_name(self):
+        cli, stub = self._build_cli()
+        cli.cmd_tl("list friends")
+        stub.timeline.assert_called_once_with("list", 10, list_id="abc")
+
+    def test_cmd_tl_list_with_target_and_limit(self):
+        cli, stub = self._build_cli()
+        cli.cmd_tl("list family 25")
+        stub.timeline.assert_called_once_with("list", 25, list_id="def")
+
+    def test_cmd_tl_list_bare_limit_uses_active(self):
+        """`tl list 5` (bare number) must use the active list, not treat 5 as a target."""
+        cli, stub = self._build_cli()
+        with patch("misskey_cli.config.get_active_list_id", return_value="abc"):
+            cli.cmd_tl("list 5")
+        stub.timeline.assert_called_once_with("list", 5, list_id="abc")
+
+    def test_cmd_tl_list_no_arg_uses_active(self):
+        cli, stub = self._build_cli()
+        with patch("misskey_cli.config.get_active_list_id", return_value="def"):
+            cli.cmd_tl("list")
+        stub.timeline.assert_called_once_with("list", 10, list_id="def")
+
+    def test_cmd_tl_list_not_found_does_not_call_api(self):
+        cli, stub = self._build_cli()
+        cli.cmd_tl("list nonexistent")
+        stub.timeline.assert_not_called()
+
+    def test_cmd_tl_list_no_active_no_arg_errors(self):
+        cli, stub = self._build_cli()
+        with patch("misskey_cli.config.get_active_list_id", return_value=None):
+            cli.cmd_tl("list")
+        stub.timeline.assert_not_called()
+
+    def test_cmd_default_timeline_list_with_target(self):
+        cli, _ = self._build_cli()
+        with patch("misskey_cli.config.set_active_list_id") as set_act, \
+             patch("misskey_cli.config.set_default_timeline") as set_def, \
+             patch("misskey_cli.config.get_active_list_id", return_value=None):
+            cli.cmd_default_timeline("list friends")
+        set_act.assert_called_once_with("abc")
+        set_def.assert_called_once_with("list")
+
+    def test_cmd_default_timeline_list_without_target_and_no_active_errors(self):
+        cli, _ = self._build_cli()
+        with patch("misskey_cli.config.set_active_list_id") as set_act, \
+             patch("misskey_cli.config.set_default_timeline") as set_def, \
+             patch("misskey_cli.config.get_active_list_id", return_value=None):
+            cli.cmd_default_timeline("list")
+        set_act.assert_not_called()
+        set_def.assert_not_called()
+
+    def test_cmd_tl_non_list_still_accepts_limit(self):
+        """Regression: `tl home 20` must keep working unchanged."""
+        cli, stub = self._build_cli()
+        cli.cmd_tl("home 20")
+        stub.timeline.assert_called_once_with("home", 20)

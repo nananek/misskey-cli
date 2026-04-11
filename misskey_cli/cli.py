@@ -239,15 +239,17 @@ class MisskeyCompleter(Completer):
                     yield Completion(nid, start_position=-len(current), display_meta=display_meta)
             return
 
-        if cmd == "tl" and len(parts) <= 2:
+        if cmd in ("tl", "default_timeline") and arg_pos == 1:
             for t in TL_TYPES:
                 if t.startswith(current):
                     yield Completion(t, start_position=-len(current))
 
-        elif cmd == "default_timeline" and len(parts) <= 2:
-            for t in TL_TYPES:
-                if t.startswith(current):
-                    yield Completion(t, start_position=-len(current))
+        elif (
+            cmd in ("tl", "default_timeline")
+            and arg_pos == 2
+            and parts[1] == "list"
+        ):
+            yield from self._complete_list_target(current)
 
         elif cmd in ("note", "note_text", "default_visibility") and len(parts) <= 2:
             for v in VISIBILITIES:
@@ -287,12 +289,21 @@ class MisskeyCompleter(Completer):
                     if sub.startswith(current):
                         yield Completion(sub, start_position=-len(current))
             elif arg_pos == 2 and len(parts) >= 2 and parts[1] == "use":
-                active_id = config.get_active_list_id()
-                for lst in self._get_lists():
-                    name = lst.get("name") or ""
-                    if name.startswith(current):
-                        meta = _("meta.account_active") if lst["id"] == active_id else f"[{lst['id']}]"
-                        yield Completion(name, start_position=-len(current), display_meta=meta)
+                yield from self._complete_list_target(current)
+
+    def _complete_list_target(self, current):
+        active_id = config.get_active_list_id()
+        for lst in self._get_lists():
+            name = lst.get("name") or ""
+            if name.startswith(current):
+                meta = (
+                    _("meta.account_active")
+                    if lst["id"] == active_id
+                    else f"[{lst['id']}]"
+                )
+                yield Completion(
+                    name, start_position=-len(current), display_meta=meta
+                )
 
 
 class MisskeyCLI:
@@ -378,6 +389,37 @@ class MisskeyCLI:
         if len(matches_by_name) > 1:
             return None, "ambiguous"
         return None, "not_found"
+
+    def _activate_list(self, lst):
+        """Persist ``lst`` as the active list and print the status line."""
+        config.set_active_list_id(lst["id"])
+        print(_(
+            "status.list_active_set",
+            name=lst.get("name") or "(unnamed)",
+            id=lst["id"],
+        ))
+
+    def _resolve_list_with_refresh(self, target):
+        """Resolve a list target, refetching once on cache miss.
+
+        Prints a user-facing error and returns ``None`` when the target cannot
+        be resolved. Returns the resolved list dict on success.
+        """
+        lst, status = self._resolve_list(target)
+        if status == "not_found":
+            try:
+                self._refresh_lists()
+            except Exception as e:
+                print(_("error.generic", message=str(e)))
+                return None
+            lst, status = self._resolve_list(target)
+        if status == "not_found":
+            print(_("error.list_not_found", target=target))
+            return None
+        if status == "ambiguous":
+            print(_("error.list_ambiguous", target=target))
+            return None
+        return lst
 
     def _get_note_meta(self):
         return self._note_meta
@@ -589,14 +631,32 @@ class MisskeyCLI:
             return
         parts = arg.strip().split()
         tl_type = parts[0] if parts else config.get_default_timeline()
-        limit = int(parts[1]) if len(parts) > 1 else 10
         kwargs = {}
         if tl_type == "list":
-            list_id = config.get_active_list_id()
-            if not list_id:
-                print(_("error.no_active_list"))
-                return
-            kwargs["list_id"] = list_id
+            # `tl list [target] [limit]` — target is a name or id. If the
+            # second token is a bare number it's the limit (active list
+            # is used), otherwise it's the target. Caveat: a list whose
+            # name is pure digits is unreachable via this shortcut; use
+            # `list use <id>` first, then `tl list`.
+            target = None
+            rest = parts[1:]
+            if rest and not rest[0].isdigit():
+                target = rest[0]
+                rest = rest[1:]
+            limit = int(rest[0]) if rest else 10
+            if target:
+                lst = self._resolve_list_with_refresh(target)
+                if lst is None:
+                    return
+                kwargs["list_id"] = lst["id"]
+            else:
+                list_id = config.get_active_list_id()
+                if not list_id:
+                    print(_("error.no_active_list"))
+                    return
+                kwargs["list_id"] = list_id
+        else:
+            limit = int(parts[1]) if len(parts) > 1 else 10
         try:
             notes = self.client.timeline(tl_type, limit, **kwargs)
             if not notes:
@@ -661,18 +721,28 @@ class MisskeyCLI:
         print(_("status.default_visibility_set", value=v))
 
     def cmd_default_timeline(self, arg):
-        v = arg.strip()
-        if not v:
+        parts = arg.strip().split()
+        if not parts:
             print(_("status.default_timeline_current", value=config.get_default_timeline()))
             return
+        v = parts[0]
         if v not in TL_TYPES:
             print(_("error.invalid_choice", choices=", ".join(TL_TYPES)))
             return
         if not self._require_login():
             return
-        if v == "list" and not config.get_active_list_id():
-            print(_("error.default_timeline_list_requires_active"))
-            return
+        if v == "list":
+            # `default_timeline list <target>` switches the active list and
+            # sets the default in one shot. Without a target, an active
+            # list must already be set.
+            if len(parts) >= 2:
+                lst = self._resolve_list_with_refresh(parts[1])
+                if lst is None:
+                    return
+                self._activate_list(lst)
+            elif not config.get_active_list_id():
+                print(_("error.default_timeline_list_requires_active"))
+                return
         config.set_default_timeline(v)
         print(_("status.default_timeline_set", value=v))
 
@@ -703,25 +773,10 @@ class MisskeyCLI:
             if len(parts) < 2:
                 print(_("usage.list_use"))
                 return
-            target = parts[1]
-            lst, status = self._resolve_list(target)
-            if status == "not_found":
-                # Cache miss — refetch once in case the user just created
-                # the list on the server, then retry the resolve.
-                try:
-                    self._refresh_lists()
-                except Exception as e:
-                    print(_("error.generic", message=str(e)))
-                    return
-                lst, status = self._resolve_list(target)
-            if status == "not_found":
-                print(_("error.list_not_found", target=target))
+            lst = self._resolve_list_with_refresh(parts[1])
+            if lst is None:
                 return
-            if status == "ambiguous":
-                print(_("error.list_ambiguous", target=target))
-                return
-            config.set_active_list_id(lst["id"])
-            print(_("status.list_active_set", name=lst.get("name") or "(unnamed)", id=lst["id"]))
+            self._activate_list(lst)
         else:
             print(_("error.unknown_subcommand", sub=sub))
 
