@@ -24,6 +24,8 @@ CATALOG = {
     "cmd.help.lang": "Afficher / changer la langue d'affichage",
     "cmd.help.help": "Afficher cette liste de commandes",
     "cmd.help.quit": "Quitter",
+    "cmd.help.aliases_header": "Alias (style Mastodon) :",
+    "cmd.help.alias_for": "alias pour '{canonical}'",
 
     # ----- Usage hints -----
     "usage.login": "Utilisation : login <host>  ex. login misskey.caligula-sea.net",

@@ -24,6 +24,8 @@ CATALOG = {
     "cmd.help.lang": "表示言語の確認 / 変更",
     "cmd.help.help": "コマンド一覧を表示",
     "cmd.help.quit": "終了",
+    "cmd.help.aliases_header": "エイリアス (Mastodon 風):",
+    "cmd.help.alias_for": "'{canonical}' のエイリアス",
 
     # ----- Usage hints -----
     "usage.login": "使い方: login <host>  例: login misskey.caligula-sea.net",

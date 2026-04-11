@@ -1,6 +1,7 @@
 import os
 import re
 import subprocess
+import sys
 import tempfile
 from datetime import datetime
 
@@ -29,6 +30,22 @@ VISIBILITY_RANK = {"public": 0, "home": 1, "followers": 2, "specified": 3}
 def _narrower_visibility(a, b):
     return a if VISIBILITY_RANK.get(a, 0) >= VISIBILITY_RANK.get(b, 0) else b
 TL_TYPES = ("home", "local", "hybrid", "global", "list")
+
+# Commands that terminate a cmdloop / script run instead of dispatching.
+QUIT_COMMANDS = ("quit", "exit")
+
+# Mastodon-style aliases → canonical (Misskey-style) command name.
+# Resolved in ``_dispatch_line`` before dispatch and normalised in
+# :class:`MisskeyCompleter` before arg-position checks, so aliases get the
+# same completion behaviour as their canonical counterparts.
+ALIASES = {
+    "post": "note",
+    "post_text": "note_text",
+    "toot": "note",
+    "toot_text": "note_text",
+    "boost": "renote",
+    "whoami": "i",
+}
 
 # Map command name → catalog key holding its description.
 COMMANDS = {
@@ -217,14 +234,23 @@ class MisskeyCompleter(Completer):
         parts = text.split()
 
         if not parts or (len(parts) == 1 and not text.endswith(" ")):
-            # Completing command name
+            # Completing command name (canonical commands + Mastodon-style aliases)
             word = parts[0] if parts else ""
             for cmd_name, desc_key in COMMANDS.items():
                 if cmd_name.startswith(word):
                     yield Completion(cmd_name, start_position=-len(word), display_meta=_(desc_key))
+            for alias, canonical in ALIASES.items():
+                if alias.startswith(word):
+                    yield Completion(
+                        alias,
+                        start_position=-len(word),
+                        display_meta=_("cmd.help.alias_for", canonical=canonical),
+                    )
             return
 
-        cmd = parts[0]
+        # Normalize Mastodon-style aliases so downstream arg-position
+        # checks (``cmd in NOTE_ID_COMMANDS`` etc.) behave identically.
+        cmd = ALIASES.get(parts[0], parts[0])
         # Current word being typed (empty if trailing space)
         current = parts[-1] if not text.endswith(" ") else ""
         # Position of the current/next argument (1 = first arg)
@@ -313,28 +339,47 @@ class MisskeyCLI:
         self._emoji_cache = None
         self._lists_cache = None
         self._note_meta = []
+        self._had_error = False
+        self._initial_display = None
+        self._dispatch = None
         self.client = make_client()
         if self.client.logged_in:
             try:
                 me = self.client.i()
                 self.username = me["username"]
                 self.user_id = me["id"]
-                display = me.get("name") or me["username"]
-                print(_("status.login_active_as", display_name=display))
+                self._initial_display = me.get("name") or me["username"]
             except Exception:
-                print(_("error.token_invalid_relogin"))
+                # Printed directly (not via ``_error``) so ``_had_error``
+                # stays False at construction time. ``run_script`` would
+                # reset it anyway, but we also don't want to accidentally
+                # poison a subsequent call.
+                print(_("error.token_invalid_relogin"), file=sys.stderr)
                 self.client.token = None
 
         config.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        self.session = PromptSession(
-            history=FileHistory(HISTORY_FILE),
-            completer=MisskeyCompleter(
-                self._get_emoji_names, self._get_note_meta, self._get_lists
-            ),
-            # Run completions off the UI thread so a first-time `list use` /
-            # emoji lookup doesn't block the REPL on a network round-trip.
-            complete_in_thread=True,
-        )
+        # Created lazily on first cmdloop() call so script mode
+        # (``-c`` / ``-f`` / piped stdin) never touches the terminal.
+        self.session = None
+
+    def _greet_active_account(self):
+        """Show the 'Logged in as X' line. Called only from ``cmdloop``
+        so script-mode invocations keep stdout clean."""
+        if self._initial_display:
+            print(_("status.login_active_as", display_name=self._initial_display))
+
+    def _ensure_session(self):
+        if self.session is None:
+            self.session = PromptSession(
+                history=FileHistory(HISTORY_FILE),
+                completer=MisskeyCompleter(
+                    self._get_emoji_names, self._get_note_meta, self._get_lists
+                ),
+                # Run completions off the UI thread so a first-time
+                # ``list use`` / emoji lookup doesn't block the REPL
+                # on a network round-trip.
+                complete_in_thread=True,
+            )
 
     def _get_emoji_names(self):
         if self._emoji_cache is None and self.client.logged_in:
@@ -410,14 +455,14 @@ class MisskeyCLI:
             try:
                 self._refresh_lists()
             except Exception as e:
-                print(_("error.generic", message=str(e)))
+                self._error("error.generic", message=str(e))
                 return None
             lst, status = self._resolve_list(target)
         if status == "not_found":
-            print(_("error.list_not_found", target=target))
+            self._error("error.list_not_found", target=target)
             return None
         if status == "ambiguous":
-            print(_("error.list_ambiguous", target=target))
+            self._error("error.list_ambiguous", target=target)
             return None
         return lst
 
@@ -444,9 +489,19 @@ class MisskeyCLI:
         who.append(("", f" [{vis}]> "))
         return who
 
+    def _error(self, key, **fmt):
+        """Print a user-facing error to stderr and mark the session as failed.
+
+        Non-interactive callers (``run_script``) use ``self._had_error`` to
+        decide the process exit code. Interactive ``cmdloop`` ignores the
+        flag but still benefits from errors going to stderr.
+        """
+        print(_(key, **fmt), file=sys.stderr)
+        self._had_error = True
+
     def _require_login(self):
         if not self.client.logged_in:
-            print(_("error.not_logged_in"))
+            self._error("error.not_logged_in")
             return False
         return True
 
@@ -507,20 +562,24 @@ class MisskeyCLI:
     def cmd_help(self, arg):
         for name, key in COMMANDS.items():
             print(f"  {name:22s} {_(key)}")
+        print()
+        print(_("cmd.help.aliases_header"))
+        for alias, canonical in ALIASES.items():
+            print(f"  {alias:22s} {_('cmd.help.alias_for', canonical=canonical)}")
 
     def cmd_login(self, arg):
         if not arg.strip():
-            print(_("usage.login"))
+            self._error("usage.login")
             return
         host, scheme = parse_host_arg(arg)
         software = detect_software(host, scheme=scheme)
         if software is None:
-            print(_("error.detect_failed", host=host))
-            print(_("error.detect_failed_hint"))
+            self._error("error.detect_failed", host=host)
+            self._error("error.detect_failed_hint")
             return
         print(_("status.detected", software=software))
         if software not in MIAUTH_SOFTWARE and software not in MASTODON_SOFTWARE:
-            print(_("error.unsupported_server", software=software))
+            self._error("error.unsupported_server", software=software)
             return
         client = make_client(software=software, scheme=scheme)
         try:
@@ -544,7 +603,7 @@ class MisskeyCLI:
             display = user.get("name") or username
             print(_("status.login_success", display_name=display))
         except Exception as e:
-            print(_("error.login_failed", message=str(e)))
+            self._error("error.login_failed", message=str(e))
 
     def _reload_client(self):
         self.client = make_client()
@@ -559,7 +618,7 @@ class MisskeyCLI:
                 self.username = me["username"]
                 self.user_id = me["id"]
             except Exception:
-                print(_("error.token_invalid"))
+                self._error("error.token_invalid")
                 self.client.token = None
 
     def cmd_account(self, arg):
@@ -583,25 +642,25 @@ class MisskeyCLI:
         sub = parts[0]
         if sub == "use":
             if len(parts) < 2:
-                print(_("usage.account_use"))
+                self._error("usage.account_use")
                 return
             target = parts[1]
             result = config.switch_account(target)
             if result == "not_found":
-                print(_("error.account_not_found", target=target))
+                self._error("error.account_not_found", target=target)
                 return
             if result == "ambiguous":
-                print(_("error.account_ambiguous", target=target))
+                self._error("error.account_ambiguous", target=target)
                 return
             self._reload_client()
             who = f"@{self.username}@{self.client.host}" if self.username else target
             print(_("status.switched", who=who))
         else:
-            print(_("error.unknown_subcommand", sub=sub))
+            self._error("error.unknown_subcommand", sub=sub)
 
     def cmd_logout(self, arg):
         if not self.client.logged_in:
-            print(_("error.not_logged_in_short"))
+            self._error("error.not_logged_in_short")
             return
         host = self.client.host
         config.delete_active_account()
@@ -624,7 +683,7 @@ class MisskeyCLI:
                 followers=me.get("followersCount", 0),
             ))
         except Exception as e:
-            print(_("error.generic", message=str(e)))
+            self._error("error.generic", message=str(e))
 
     def cmd_tl(self, arg):
         if not self._require_login():
@@ -652,7 +711,7 @@ class MisskeyCLI:
             else:
                 list_id = config.get_active_list_id()
                 if not list_id:
-                    print(_("error.no_active_list"))
+                    self._error("error.no_active_list")
                     return
                 kwargs["list_id"] = list_id
         else:
@@ -667,7 +726,7 @@ class MisskeyCLI:
                 print_formatted_text(FormattedText(_format_note(note)))
                 print()
         except Exception as e:
-            print(_("error.generic", message=str(e)))
+            self._error("error.generic", message=str(e))
 
     def cmd_note(self, arg):
         if not self._require_login():
@@ -682,14 +741,14 @@ class MisskeyCLI:
             note = result["createdNote"]
             print(_("status.posted", id=note["id"], visibility=visibility))
         except Exception as e:
-            print(_("error.generic", message=str(e)))
+            self._error("error.generic", message=str(e))
 
     def cmd_note_text(self, arg):
         if not self._require_login():
             return
         parts = arg.strip().split(None, 1)
         if not parts:
-            print(_("usage.note_text"))
+            self._error("usage.note_text")
             return
         if parts[0] in VISIBILITIES:
             visibility = parts[0]
@@ -698,14 +757,14 @@ class MisskeyCLI:
             visibility = config.get_default_visibility()
             text = arg.strip()
         if not text:
-            print(_("usage.note_text"))
+            self._error("usage.note_text")
             return
         try:
             result = self.client.create_note(text, visibility=visibility)
             note = result["createdNote"]
             print(_("status.posted", id=note["id"], visibility=visibility))
         except Exception as e:
-            print(_("error.generic", message=str(e)))
+            self._error("error.generic", message=str(e))
 
     def cmd_default_visibility(self, arg):
         v = arg.strip()
@@ -713,7 +772,7 @@ class MisskeyCLI:
             print(_("status.default_visibility_current", value=config.get_default_visibility()))
             return
         if v not in VISIBILITIES:
-            print(_("error.invalid_choice", choices=", ".join(VISIBILITIES)))
+            self._error("error.invalid_choice", choices=", ".join(VISIBILITIES))
             return
         if not self._require_login():
             return
@@ -727,7 +786,7 @@ class MisskeyCLI:
             return
         v = parts[0]
         if v not in TL_TYPES:
-            print(_("error.invalid_choice", choices=", ".join(TL_TYPES)))
+            self._error("error.invalid_choice", choices=", ".join(TL_TYPES))
             return
         if not self._require_login():
             return
@@ -741,7 +800,7 @@ class MisskeyCLI:
                     return
                 self._activate_list(lst)
             elif not config.get_active_list_id():
-                print(_("error.default_timeline_list_requires_active"))
+                self._error("error.default_timeline_list_requires_active")
                 return
         config.set_default_timeline(v)
         print(_("status.default_timeline_set", value=v))
@@ -756,7 +815,7 @@ class MisskeyCLI:
             try:
                 lists = self._refresh_lists()
             except Exception as e:
-                print(_("error.generic", message=str(e)))
+                self._error("error.generic", message=str(e))
                 return
             if not lists:
                 print(_("empty.lists"))
@@ -771,14 +830,14 @@ class MisskeyCLI:
         sub = parts[0]
         if sub == "use":
             if len(parts) < 2:
-                print(_("usage.list_use"))
+                self._error("usage.list_use")
                 return
             lst = self._resolve_list_with_refresh(parts[1])
             if lst is None:
                 return
             self._activate_list(lst)
         else:
-            print(_("error.unknown_subcommand", sub=sub))
+            self._error("error.unknown_subcommand", sub=sub)
 
     def cmd_lang(self, arg):
         code = arg.strip()
@@ -787,7 +846,7 @@ class MisskeyCLI:
             print(_("status.lang_current", code=i18n.get_language(), codes=codes))
             return
         if code not in i18n.SUPPORTED_LANGS:
-            print(_("error.unknown_lang", code=code, codes=codes))
+            self._error("error.unknown_lang", code=code, codes=codes)
             return
         i18n.set_language(code)
         print(_("status.lang_set", code=code))
@@ -797,7 +856,7 @@ class MisskeyCLI:
         try:
             original = self.client.show_note(note_id)
         except Exception as e:
-            print(_("error.fetch_parent_failed", message=str(e)))
+            self._error("error.fetch_parent_failed", message=str(e))
             return
 
         orig_visibility = original.get("visibility", "public")
@@ -841,19 +900,19 @@ class MisskeyCLI:
             note = result["createdNote"]
             print(_("status.replied", id=note["id"], visibility=visibility))
         except Exception as e:
-            print(_("error.generic", message=str(e)))
+            self._error("error.generic", message=str(e))
 
     def cmd_reply(self, arg):
         if not self._require_login():
             return
         parts = arg.strip().split()
         if not parts or len(parts) > 2:
-            print(_("usage.reply"))
+            self._error("usage.reply")
             return
         note_id = parts[0]
         explicit_vis = parts[1] if len(parts) > 1 else None
         if explicit_vis and explicit_vis not in VISIBILITIES:
-            print(_("error.invalid_visibility", value=explicit_vis))
+            self._error("error.invalid_visibility", value=explicit_vis)
             return
         self._do_reply(note_id, explicit_vis, text=None)
 
@@ -862,12 +921,12 @@ class MisskeyCLI:
             return
         parts = arg.strip().split(None, 2)
         if len(parts) < 2:
-            print(_("usage.reply_text"))
+            self._error("usage.reply_text")
             return
         note_id = parts[0]
         if parts[1] in VISIBILITIES:
             if len(parts) < 3:
-                print(_("usage.reply_text"))
+                self._error("usage.reply_text")
                 return
             explicit_vis = parts[1]
             text = parts[2]
@@ -881,20 +940,20 @@ class MisskeyCLI:
             return
         note_id = arg.strip()
         if not note_id:
-            print(_("usage.renote"))
+            self._error("usage.renote")
             return
         try:
             self.client.renote(note_id)
             print(_("status.renoted"))
         except Exception as e:
-            print(_("error.generic", message=str(e)))
+            self._error("error.generic", message=str(e))
 
     def cmd_react(self, arg):
         if not self._require_login():
             return
         parts = arg.strip().split(None, 1)
         if len(parts) < 2:
-            print(_("usage.react"))
+            self._error("usage.react")
             return
         note_id, reaction = parts
         if not reaction.startswith(":"):
@@ -906,7 +965,7 @@ class MisskeyCLI:
             else:
                 print(_("status.reacted", reaction=reaction))
         except Exception as e:
-            print(_("error.generic", message=str(e)))
+            self._error("error.generic", message=str(e))
 
     def cmd_notif(self, arg):
         if not self._require_login():
@@ -923,31 +982,74 @@ class MisskeyCLI:
             for n in notifs:
                 print_formatted_text(FormattedText(_format_notification(n)))
         except Exception as e:
-            print(_("error.generic", message=str(e)))
+            self._error("error.generic", message=str(e))
+
+    def _get_dispatch(self):
+        """Lazily build and cache the command-name → handler mapping.
+
+        Derived from the module-level :data:`COMMANDS` catalog so new
+        commands only need to be added in one place. ``quit`` / ``exit``
+        are not dispatchable (callers handle them specially via
+        :data:`QUIT_COMMANDS`).
+        """
+        if self._dispatch is None:
+            self._dispatch = {
+                name: getattr(self, f"cmd_{name}")
+                for name in COMMANDS
+                if name not in QUIT_COMMANDS
+            }
+        return self._dispatch
+
+    def _dispatch_line(self, line):
+        """Parse and dispatch a single line.
+
+        Returns ``True`` if the line requested a halt (``quit`` / ``exit``),
+        otherwise ``False``. Empty lines are a no-op. Errors are routed
+        through :meth:`_error`. Exceptions raised by handlers are caught
+        and reported; this is a belt-and-braces fallback since every
+        ``cmd_*`` method already has its own ``try/except``.
+        """
+        parts = line.split(None, 1)
+        if not parts:
+            return False
+        cmd_name = ALIASES.get(parts[0], parts[0])
+        arg = parts[1] if len(parts) > 1 else ""
+        if cmd_name in QUIT_COMMANDS:
+            return True
+        handler = self._get_dispatch().get(cmd_name)
+        if handler is None:
+            self._error("error.unknown_command", cmd=cmd_name)
+            return False
+        try:
+            handler(arg)
+        except Exception as e:
+            self._error("error.generic", message=str(e))
+        return False
+
+    def run_script(self, lines):
+        """Execute CLI commands from an iterable of lines non-interactively.
+
+        Blank lines and lines beginning with ``#`` are skipped. ``quit`` /
+        ``exit`` halt execution. Errors from individual commands are reported
+        via :meth:`_error` (stderr) and cause the script to report failure,
+        but subsequent lines keep running so the user sees every problem in
+        one pass.
+
+        Returns ``True`` iff every executed command succeeded.
+        """
+        self._had_error = False
+        for raw in lines:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if self._dispatch_line(line):
+                break
+        return not self._had_error
 
     def cmdloop(self):
         print(_("app.banner"))
-        dispatch = {
-            "login": self.cmd_login,
-            "account": self.cmd_account,
-            "logout": self.cmd_logout,
-            "i": self.cmd_i,
-            "tl": self.cmd_tl,
-            "note": self.cmd_note,
-            "note_text": self.cmd_note_text,
-            "default_visibility": self.cmd_default_visibility,
-            "default_timeline": self.cmd_default_timeline,
-            "reply": self.cmd_reply,
-            "reply_text": self.cmd_reply_text,
-            "renote": self.cmd_renote,
-            "react": self.cmd_react,
-            "notif": self.cmd_notif,
-            "list": self.cmd_list,
-            "lang": self.cmd_lang,
-            "help": self.cmd_help,
-            "quit": None,
-            "exit": None,
-        }
+        self._greet_active_account()
+        self._ensure_session()
 
         while True:
             try:
@@ -962,16 +1064,6 @@ class MisskeyCLI:
             if not text:
                 continue
 
-            parts = text.split(None, 1)
-            cmd_name = parts[0]
-            arg = parts[1] if len(parts) > 1 else ""
-
-            if cmd_name in ("quit", "exit"):
+            if self._dispatch_line(text):
                 print(_("app.bye"))
                 break
-
-            handler = dispatch.get(cmd_name)
-            if handler:
-                handler(arg)
-            else:
-                print(_("error.unknown_command", cmd=cmd_name))

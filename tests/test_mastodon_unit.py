@@ -2,6 +2,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from prompt_toolkit.document import Document
 
 from misskey_cli.api import (
     MASTODON_SOFTWARE,
@@ -11,6 +12,7 @@ from misskey_cli.api import (
     detect_software,
     make_client,
 )
+from misskey_cli.cli import ALIASES, COMMANDS, MisskeyCompleter
 
 
 # ---------- MASTODON_SOFTWARE set ----------
@@ -515,6 +517,66 @@ class TestListTimeline:
             c.timeline("bogus", limit=5)
 
 
+# ---------- CLI test helpers ----------
+
+
+def _build_stub_cli(**stub_attrs):
+    """Instantiate MisskeyCLI with the client and DB side-effects stubbed.
+
+    Extra keyword arguments become ``stub.<name>.return_value = value``
+    assignments on the mock client, so callers can override the default
+    ``lists`` / ``timeline`` / ``create_note`` responses as needed.
+    Returns ``(cli, stub)``.
+    """
+    from misskey_cli.cli import MisskeyCLI
+
+    with patch("misskey_cli.cli.make_client") as mc, \
+         patch("misskey_cli.config.CONFIG_DIR") as cd:
+        cd.mkdir = MagicMock()
+        stub = MagicMock()
+        stub.logged_in = True
+        stub.i.return_value = {"id": "u1", "username": "bob", "name": "Bob"}
+        stub.timeline.return_value = []
+        stub.lists.return_value = [
+            {"id": "abc", "name": "friends"},
+            {"id": "def", "name": "family"},
+        ]
+        stub.create_note.return_value = {
+            "createdNote": {"id": "n1", "text": "hi", "visibility": "public"}
+        }
+        for attr, value in stub_attrs.items():
+            getattr(stub, attr).return_value = value
+        mc.return_value = stub
+        cli = MisskeyCLI()
+        return cli, stub
+
+
+def _make_completer(*, emoji=None, note_meta=None, lists=None):
+    """Build a :class:`MisskeyCompleter` with injected callbacks.
+
+    Defaults:
+      - ``emoji``: empty list
+      - ``note_meta``: empty list
+      - ``lists``: the canonical two-list fixture used across the file.
+    """
+    if lists is None:
+        lists = [
+            {"id": "abc", "name": "friends"},
+            {"id": "def", "name": "family"},
+        ]
+    return MisskeyCompleter(
+        get_emoji_names=lambda: emoji or [],
+        get_note_meta=lambda: note_meta or [],
+        get_lists=lambda: lists,
+    )
+
+
+def _complete_text(completer, text):
+    """Return the list of completion texts a completer yields for ``text``."""
+    doc = Document(text=text, cursor_position=len(text))
+    return [c.text for c in completer.get_completions(doc, None)]
+
+
 # ---------- CLI: tl list / default_timeline list completion and parsing ----------
 
 
@@ -528,109 +590,67 @@ class TestListCompleterAndCmds:
       sets the default in one shot
     """
 
-    @staticmethod
-    def _completer():
-        from misskey_cli.cli import MisskeyCompleter
-
-        lists = [
-            {"id": "abc", "name": "friends"},
-            {"id": "def", "name": "family"},
-        ]
-        return MisskeyCompleter(
-            get_emoji_names=lambda: [],
-            get_note_meta=lambda: [],
-            get_lists=lambda: lists,
-        )
-
-    @staticmethod
-    def _complete(completer, text):
-        from prompt_toolkit.document import Document
-
-        doc = Document(text=text, cursor_position=len(text))
-        return [c.text for c in completer.get_completions(doc, None)]
-
     def test_tl_list_offers_list_names(self):
         with patch("misskey_cli.config.get_active_list_id", return_value=None):
-            results = self._complete(self._completer(), "tl list ")
+            results = _complete_text(_make_completer(), "tl list ")
         assert "friends" in results
         assert "family" in results
 
     def test_tl_list_prefix_filter(self):
         with patch("misskey_cli.config.get_active_list_id", return_value=None):
-            results = self._complete(self._completer(), "tl list fr")
+            results = _complete_text(_make_completer(), "tl list fr")
         assert results == ["friends"]
 
     def test_default_timeline_list_offers_list_names(self):
         with patch("misskey_cli.config.get_active_list_id", return_value=None):
-            results = self._complete(self._completer(), "default_timeline list ")
+            results = _complete_text(_make_completer(), "default_timeline list ")
         assert "friends" in results
         assert "family" in results
 
     def test_list_use_still_works(self):
         """Regression: the new helper shouldn't break the original `list use` path."""
         with patch("misskey_cli.config.get_active_list_id", return_value=None):
-            results = self._complete(self._completer(), "list use fr")
+            results = _complete_text(_make_completer(), "list use fr")
         assert results == ["friends"]
 
     # --- cmd-level parsing ---
 
-    @staticmethod
-    def _build_cli(lists_result=None):
-        """Instantiate MisskeyCLI with the client and DB side-effects stubbed out."""
-        from misskey_cli.cli import MisskeyCLI
-
-        with patch("misskey_cli.cli.make_client") as mc, \
-             patch("misskey_cli.config.CONFIG_DIR") as cd, \
-             patch("misskey_cli.cli.PromptSession"):
-            cd.mkdir = MagicMock()
-            stub = MagicMock()
-            stub.logged_in = True
-            stub.i.return_value = {"id": "u1", "username": "bob", "name": "Bob"}
-            stub.timeline.return_value = []
-            stub.lists.return_value = lists_result or [
-                {"id": "abc", "name": "friends"},
-                {"id": "def", "name": "family"},
-            ]
-            mc.return_value = stub
-            cli = MisskeyCLI()
-            return cli, stub
-
     def test_cmd_tl_list_with_target_name(self):
-        cli, stub = self._build_cli()
+        cli, stub = _build_stub_cli()
         cli.cmd_tl("list friends")
         stub.timeline.assert_called_once_with("list", 10, list_id="abc")
 
     def test_cmd_tl_list_with_target_and_limit(self):
-        cli, stub = self._build_cli()
+        cli, stub = _build_stub_cli()
         cli.cmd_tl("list family 25")
         stub.timeline.assert_called_once_with("list", 25, list_id="def")
 
     def test_cmd_tl_list_bare_limit_uses_active(self):
         """`tl list 5` (bare number) must use the active list, not treat 5 as a target."""
-        cli, stub = self._build_cli()
+        cli, stub = _build_stub_cli()
         with patch("misskey_cli.config.get_active_list_id", return_value="abc"):
             cli.cmd_tl("list 5")
         stub.timeline.assert_called_once_with("list", 5, list_id="abc")
 
     def test_cmd_tl_list_no_arg_uses_active(self):
-        cli, stub = self._build_cli()
+        cli, stub = _build_stub_cli()
         with patch("misskey_cli.config.get_active_list_id", return_value="def"):
             cli.cmd_tl("list")
         stub.timeline.assert_called_once_with("list", 10, list_id="def")
 
     def test_cmd_tl_list_not_found_does_not_call_api(self):
-        cli, stub = self._build_cli()
+        cli, stub = _build_stub_cli()
         cli.cmd_tl("list nonexistent")
         stub.timeline.assert_not_called()
 
     def test_cmd_tl_list_no_active_no_arg_errors(self):
-        cli, stub = self._build_cli()
+        cli, stub = _build_stub_cli()
         with patch("misskey_cli.config.get_active_list_id", return_value=None):
             cli.cmd_tl("list")
         stub.timeline.assert_not_called()
 
     def test_cmd_default_timeline_list_with_target(self):
-        cli, _ = self._build_cli()
+        cli, _ = _build_stub_cli()
         with patch("misskey_cli.config.set_active_list_id") as set_act, \
              patch("misskey_cli.config.set_default_timeline") as set_def, \
              patch("misskey_cli.config.get_active_list_id", return_value=None):
@@ -639,7 +659,7 @@ class TestListCompleterAndCmds:
         set_def.assert_called_once_with("list")
 
     def test_cmd_default_timeline_list_without_target_and_no_active_errors(self):
-        cli, _ = self._build_cli()
+        cli, _ = _build_stub_cli()
         with patch("misskey_cli.config.set_active_list_id") as set_act, \
              patch("misskey_cli.config.set_default_timeline") as set_def, \
              patch("misskey_cli.config.get_active_list_id", return_value=None):
@@ -649,6 +669,214 @@ class TestListCompleterAndCmds:
 
     def test_cmd_tl_non_list_still_accepts_limit(self):
         """Regression: `tl home 20` must keep working unchanged."""
-        cli, stub = self._build_cli()
+        cli, stub = _build_stub_cli()
         cli.cmd_tl("home 20")
         stub.timeline.assert_called_once_with("home", 20)
+
+
+# ---------- CLI: run_script (non-interactive scripting) ----------
+
+
+class TestRunScript:
+    """Covers ``MisskeyCLI.run_script`` — the non-interactive entry point
+    used by ``-c`` / ``-f`` / piped stdin.
+    """
+
+    def test_dispatches_to_handler(self):
+        cli, stub = _build_stub_cli()
+        ok = cli.run_script(["note_text public hello"])
+        assert ok is True
+        stub.create_note.assert_called_once()
+        assert stub.create_note.call_args[0][0] == "hello"
+
+    def test_multiple_lines_run_in_order(self):
+        cli, stub = _build_stub_cli()
+        ok = cli.run_script([
+            "note_text public one",
+            "note_text public two",
+        ])
+        assert ok is True
+        assert stub.create_note.call_count == 2
+
+    def test_blank_lines_are_skipped(self):
+        cli, stub = _build_stub_cli()
+        ok = cli.run_script(["", "   ", "note_text public hi", ""])
+        assert ok is True
+        stub.create_note.assert_called_once()
+
+    def test_comments_are_skipped(self):
+        cli, stub = _build_stub_cli()
+        ok = cli.run_script([
+            "# this is a comment",
+            "  # indented comment",
+            "note_text public hi",
+        ])
+        assert ok is True
+        stub.create_note.assert_called_once()
+
+    def test_unknown_command_sets_error(self, capsys):
+        cli, stub = _build_stub_cli()
+        ok = cli.run_script(["bogus foo"])
+        assert ok is False
+        captured = capsys.readouterr()
+        assert "bogus" in captured.err
+        # The error must go to stderr, not stdout.
+        assert "bogus" not in captured.out
+
+    def test_unknown_command_does_not_halt_script(self):
+        cli, stub = _build_stub_cli()
+        ok = cli.run_script(["bogus", "note_text public hi"])
+        assert ok is False
+        # second line still ran
+        stub.create_note.assert_called_once()
+
+    def test_quit_halts_execution(self):
+        cli, stub = _build_stub_cli()
+        ok = cli.run_script([
+            "note_text public before",
+            "quit",
+            "note_text public after",
+        ])
+        assert ok is True
+        assert stub.create_note.call_count == 1
+
+    def test_exit_halts_execution(self):
+        cli, stub = _build_stub_cli()
+        ok = cli.run_script([
+            "note_text public before",
+            "exit",
+            "note_text public after",
+        ])
+        assert ok is True
+        assert stub.create_note.call_count == 1
+
+    def test_handler_exception_is_caught(self, capsys):
+        """If a command raises, run_script reports it via _error and keeps going."""
+        cli, stub = _build_stub_cli()
+        # First call raises, second succeeds.
+        stub.create_note.side_effect = [
+            RuntimeError("boom"),
+            {"createdNote": {"id": "n2", "text": "ok", "visibility": "public"}},
+        ]
+        ok = cli.run_script([
+            "note_text public first",
+            "note_text public second",
+        ])
+        assert ok is False
+        captured = capsys.readouterr()
+        # cmd_note_text has its own try/except that swallows to _error — the
+        # outer run_script try/except is a fallback for handlers that don't
+        # catch their own exceptions. Either way, the error lands on stderr.
+        assert "boom" in captured.err
+        # The script did not halt on the exception.
+        assert stub.create_note.call_count == 2
+
+    def test_error_resets_between_runs(self):
+        cli, stub = _build_stub_cli()
+        assert cli.run_script(["bogus"]) is False
+        # A subsequent successful run must report success.
+        assert cli.run_script(["note_text public hi"]) is True
+
+    def test_usage_error_goes_to_stderr(self, capsys):
+        cli, stub = _build_stub_cli()
+        ok = cli.run_script(["note_text"])
+        assert ok is False
+        captured = capsys.readouterr()
+        assert "Usage" in captured.err or "note_text" in captured.err
+        stub.create_note.assert_not_called()
+
+    def test_not_logged_in_error_goes_to_stderr(self, capsys):
+        cli, stub = _build_stub_cli()
+        stub.logged_in = False
+        ok = cli.run_script(["note_text public hi"])
+        assert ok is False
+        captured = capsys.readouterr()
+        assert captured.err  # something was printed to stderr
+        stub.create_note.assert_not_called()
+
+
+# ---------- CLI: Mastodon-style aliases ----------
+
+
+class TestAliases:
+    """Covers the Mastodon-style command aliases (``post`` / ``toot`` /
+    ``boost`` / ``whoami``). Aliases must dispatch to the canonical handler,
+    show up in tab completion, and appear in ``help`` output.
+    """
+
+    def test_aliases_table_is_non_empty(self):
+        # Sanity check: the canonical targets must actually exist as commands.
+        assert ALIASES
+        for alias, canonical in ALIASES.items():
+            assert alias not in COMMANDS, f"alias {alias} collides with a real command"
+            assert canonical in COMMANDS, f"alias {alias} targets missing command {canonical}"
+
+    def test_post_alias_dispatches_to_note_text(self):
+        cli, stub = _build_stub_cli()
+        ok = cli.run_script(["post_text public hello via post_text"])
+        assert ok is True
+        stub.create_note.assert_called_once()
+        assert stub.create_note.call_args[0][0] == "hello via post_text"
+
+    def test_toot_alias_dispatches_to_note_text(self):
+        cli, stub = _build_stub_cli()
+        ok = cli.run_script(["toot_text public hello via toot_text"])
+        assert ok is True
+        stub.create_note.assert_called_once()
+        assert stub.create_note.call_args[0][0] == "hello via toot_text"
+
+    def test_boost_alias_dispatches_to_renote(self):
+        cli, stub = _build_stub_cli()
+        stub.renote.return_value = {"createdNote": {"id": "n2"}}
+        ok = cli.run_script(["boost abc123"])
+        assert ok is True
+        stub.renote.assert_called_once_with("abc123")
+
+    def test_whoami_alias_dispatches_to_i(self):
+        cli, stub = _build_stub_cli()
+        ok = cli.run_script(["whoami"])
+        assert ok is True
+        # client.i() is invoked once at construction and again by cmd_i.
+        assert stub.i.call_count >= 1
+
+    def test_unknown_alias_is_still_unknown(self, capsys):
+        cli, stub = _build_stub_cli()
+        ok = cli.run_script(["yeet hello world"])
+        assert ok is False
+        assert "yeet" in capsys.readouterr().err
+
+    def test_completer_offers_aliases_on_empty_word(self):
+        results = _complete_text(_make_completer(lists=[]), "")
+        # Mastodon-style aliases are listed alongside the canonical commands.
+        for name in ("post", "toot", "boost", "whoami", "note", "renote"):
+            assert name in results
+
+    def test_completer_prefix_filters_alias(self):
+        results = _complete_text(_make_completer(lists=[]), "too")
+        assert "toot" in results
+        assert "toot_text" in results
+
+    def test_completer_normalizes_alias_for_arg_completion(self):
+        """After an alias, arg-position completion must behave like the canonical."""
+        # ``post <tab>`` should offer visibilities (same as ``note <tab>``).
+        results = _complete_text(_make_completer(lists=[]), "post ")
+        for vis in ("public", "home", "followers", "specified"):
+            assert vis in results
+
+    def test_completer_boost_offers_note_ids(self):
+        completer = _make_completer(
+            note_meta=[{"id": "xyz789", "username": "alice", "snippet": "hi"}],
+            lists=[],
+        )
+        results = _complete_text(completer, "boost ")
+        assert "xyz789" in results
+
+    def test_help_lists_aliases(self, capsys):
+        cli, _ = _build_stub_cli()
+        cli.cmd_help("")
+        out = capsys.readouterr().out
+        # Each alias appears on its own line with its canonical target.
+        for alias in ALIASES:
+            assert alias in out
+        # The section header from the i18n catalog also appears.
+        assert "Aliases" in out or "エイリアス" in out or "Alias" in out
